@@ -573,17 +573,59 @@ var _FB_CFG={
 
 
 function initFirebase(){
-  /* Utiliser Realtime Database via REST - fonctionne partout */
-  console.log('[PROPROMO] Connexion Realtime Database...');
-  _fbConnected=true;
-  fbLoad(null);
-  /* Polling toutes les 10s pour sync temps réel */
-  setInterval(function(){
-    if(!_fbSyncing&&Date.now()-(_fbLastSave||0)>5000){
-      fbLoad(null);
-    }
-  },10000);
-  return true;
+  if(typeof firebase==='undefined'){
+    setTimeout(initFirebase,500);return false;
+  }
+  try{
+    try{firebase.app('propromo').delete();}catch(e){}
+    _fbApp=firebase.initializeApp(_FB_CFG,'propromo');
+    _fbFs=firebase.firestore(_fbApp);
+    _fbConnected=true;
+    console.log('[PROPROMO] Firebase prêt');
+    /* Charger les données au démarrage */
+    fbDocRef().get().then(function(doc){
+      _fbLoading=false;
+      if(doc.exists){
+        var d=doc.data();
+        if(d&&d.db){
+          var fb=JSON.parse(JSON.stringify(d.db));
+          ['paies','forcages','pdvs'].forEach(function(k){if(!fb[k])fb[k]=[];});
+          G.db=fb;
+          localStorage.setItem('propromo_db',JSON.stringify(G.db));
+          if(G.user){var u2=G.db.utilisateurs.find(function(u){return u.id==G.user.id;});if(u2)G.user=u2;else{G.screen='login';G.user=null;}}
+        }
+      } else {
+        if(G.db.organisations&&G.db.organisations.length>0)fbSave();
+      }
+      render();
+    }).catch(function(e){
+      _fbLoading=false;
+      console.warn('[FB] Chargement:',e.message);
+      render();
+    });
+    /* Écoute temps réel */
+    fbDocRef().onSnapshot(function(doc){
+      if(_fbSyncing||!doc.exists)return;
+      if(Date.now()-(_fbLastSave||0)<4000)return;
+      var d=doc.data();
+      if(!d||!d.db)return;
+      var fb=JSON.parse(JSON.stringify(d.db));
+      ['paies','forcages','pdvs'].forEach(function(k){if(!fb[k])fb[k]=[];});
+      if(JSON.stringify(fb)===JSON.stringify(G.db))return;
+      G.db=fb;
+      localStorage.setItem('propromo_db',JSON.stringify(G.db));
+      if(G.user){var u2=G.db.utilisateurs.find(function(u){return u.id==G.user.id;});if(u2)G.user=u2;}
+      render();
+    },function(e){
+      _fbLoading=false;
+      console.warn('[FB] Snapshot:',e.message);
+    });
+    setTimeout(function(){if(_fbLoading){_fbLoading=false;render();}},6000);
+    return true;
+  }catch(e){
+    console.error('[FB] Init:',e.message);
+    _fbLoading=false;render();return false;
+  }
 }
 
 function fbDocRef(){
@@ -591,67 +633,24 @@ function fbDocRef(){
 }
 
 function fbSave(){
-  if(_fbSyncing)return;
+  if(!_fbFs||!_fbConnected)return;
   var now=Date.now();
-  if(now-(_fbLastSave||0)<2000)return;
+  if(now-(_fbLastSave||0)<1500)return;
   _fbLastSave=now;
   _fbSyncing=true;
-  /* no-cors: contourne le préflight CORS bloqué en CI */
-  fetch(RTDB_URL,{
-    method:'PUT',
-    mode:'no-cors',
-    body:JSON.stringify({db:G.db,updated:new Date().toISOString()})
-  })
-  .then(function(){
-    /* no-cors: réponse opaque = succès présumé */
-    _fbSyncing=false;
-    _fbConnected=true;
-    _fbLastSync=tn();
-    console.log('[PROPROMO] ✅ Données envoyées');
-    render();
-  })
-  .catch(function(e){
-    _fbSyncing=false;
-    console.error('[RTDB] Erreur:',e.message);
-    setTimeout(function(){fbSave();},8000);
-  });
+  fbDocRef().set({db:G.db,updated:new Date().toISOString()})
+    .then(function(){
+      _fbSyncing=false;_fbConnected=true;_fbLastSync=tn();
+      console.log('[PROPROMO] ✅ Sauvegardé');
+    })
+    .catch(function(e){
+      _fbSyncing=false;
+      console.warn('[FB] Save:',e.message);
+      setTimeout(fbSave,5000);
+    });
 }
 
-function fbLoad(cb){
-  fetch(RTDB_URL)
-  .then(function(r){
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    return r.json();
-  })
-  .then(function(data){
-    _fbConnected=true;
-    if(data&&data.db){
-      var fbDb=JSON.parse(JSON.stringify(data.db));
-      ['paies','forcages','pdvs'].forEach(function(k){if(!fbDb[k])fbDb[k]=[];});
-      G.db=fbDb;
-      localStorage.setItem('propromo_db',JSON.stringify(G.db));
-      if(G.user){
-        var u2=G.db.utilisateurs.find(function(u){return u.id==G.user.id;});
-        if(u2)G.user=u2;
-        else{G.screen='login';G.user=null;}
-      }
-      console.log('[PROPROMO] ✅ RTDB chargé');
-      if(cb)cb(true);
-    } else {
-      if(G.db.organisations&&G.db.organisations.length>0)fbSave();
-      if(cb)cb(false);
-    }
-    _fbLoading=false;
-    render();
-  })
-  .catch(function(e){
-    _fbConnected=false;
-    console.error('[RTDB] Erreur load:',e.message);
-    _fbLoading=false;
-    if(cb)cb(false);
-    render();
-  });
-}
+
 
 function fbLoad(callback){
   if(!_fbFs){if(callback)callback(false);return;}
