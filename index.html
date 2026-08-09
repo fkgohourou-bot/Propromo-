@@ -187,7 +187,6 @@ span[style*="font-size:2"]{vertical-align:middle;line-height:1;}
 <!-- Firebase SDK v9 compat — chargé avant le script principal -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script></script>
 <script>
 var TODAY=new Date().toISOString().split('T')[0];
@@ -645,12 +644,11 @@ function fbLoad(callback){
 
 var _fbLastSync=null;
 function fbStatus(){
-  if(typeof firebase==='undefined')return{ok:false,msg:'Chargement...'};
-  if(!_fbFs)return{ok:false,msg:'Non connecté'};
+  /* Supabase est le backend principal */
   if(!_fbConnected)return{ok:false,msg:'Hors ligne'};
   if(_fbSyncing)return{ok:true,msg:'Sync...'};
   var t=_fbLastSync?(' · '+_fbLastSync):'';
-  return{ok:true,msg:'Sync'+t};
+  return{ok:true,msg:'Supabase'+t};
 }
 
 function saveFirebaseConfig(cfg){
