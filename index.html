@@ -186,7 +186,9 @@ span[style*="font-size:2"]{vertical-align:middle;line-height:1;}
 <div id="inv" class="inv"></div>
 <!-- Firebase SDK v9 compat — chargé avant le script principal -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script></script>
 <script>
 var TODAY=new Date().toISOString().split('T')[0];
 function uid(){return Date.now()+Math.floor(Math.random()*9999);}
@@ -356,20 +358,8 @@ return '<div class="topbar '+RGRAD[u.role]+'" style="display:flex;align-items:ce
 
 
 function rLogin(){
-/* Si Firebase charge encore et qu'on n'a pas de données locales → attendre */
-if(_fbLoading&&(!G.db.utilisateurs||G.db.utilisateurs.length<=1)){
-  return '<div style="position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(135deg,#1A2B4A,#2563EB);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px">'
-    +'<img src="'+( (function(){var g=G.db&&G.db.organisations&&G.db.organisations[0];return g&&g.logo?g.logo:'';})() )+'" style="width:80px;height:80px;border-radius:20px;object-fit:cover"/>'
-    +'<div style="font-size:24px;font-weight:900;color:#fff">PROPROMO</div>'
-    +'<div style="display:flex;gap:8px">'
-    +'<div style="width:10px;height:10px;border-radius:50%;background:#fff;opacity:.9;animation:pulse 1.2s ease-in-out infinite"></div>'
-    +'<div style="width:10px;height:10px;border-radius:50%;background:#fff;opacity:.9;animation:pulse 1.2s ease-in-out 0.4s infinite"></div>'
-    +'<div style="width:10px;height:10px;border-radius:50%;background:#fff;opacity:.9;animation:pulse 1.2s ease-in-out 0.8s infinite"></div>'
-    +'</div>'
-    +'<div style="font-size:14px;color:rgba(255,255,255,.7)">Chargement des données...</div>'
-    +'<button onclick="_fbLoading=false;render()" style="margin-top:10px;border:1.5px solid rgba(255,255,255,.4);background:transparent;color:#fff;border-radius:12px;padding:10px 24px;font-size:13px;cursor:pointer;font-family:inherit">Continuer</button>'
-    +'</div>';
-}
+
+
 return '<div class="login-bg">'
 +'<div style="text-align:center;margin-bottom:28px">'
 +'<div style="width:90px;height:90px;border-radius:22px;overflow:hidden;margin:0 auto 14px;box-shadow:0 14px 36px rgba(249,115,22,.5);border:3px solid rgba(255,255,255,.3)"><img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCABQAFADASIAAhEBAxEB/8QAGwAAAQUBAQAAAAAAAAAAAAAABQECAwQGAAf/xAA0EAABAwICBwYFBAMAAAAAAAABAAIDBBEFEhMhMUFRgZEUIjJSYbEVJUNxoSMzNUJTgtH/xAAZAQADAQEBAAAAAAAAAAAAAAADBAUBAgD/xAAnEQABBAEBCAIDAAAAAAAAAAABAAIDEQQSExQhMTIzQXEjgUJRYf/aAAwDAQACEQMRAD8A9HXJVVrpdHEAP7H8Lh7wxpcV01uo0lkqmN2a+aj7cPKOqGPkJKjLypbsx98CnW47fKLduHlHVJ8QHlHVUI6WolGYNs073GySWkqIxctzAb2m63bz1fj0s2UV1av/ABAeUdVwxJl+8zV6FB7lJcoe9y/tE3Zi00b2ysD2EOad6cgmEVBbVGEnuvBI+4RxVIJdqzUkpY9m6lyHYof2+aIobiv0+a4yu0V6DrCFkq9h9MHfrSC4B7oPuqBOtG4+5Ssy7mX/AAp2JGHvs+E7O4tbQ8qhiWN09DJorOlm3tbuSYfjcFZKIix8Mh2B2/mglDRvqpTI4ZpJHXJRGroY6Rrf8jcr83DXb8GyMMiQkuA4BYYYwNJPFWsRhYBpo7WJs63FUCUrISxromWErtTnEZbudrGYbCCdjhvUbTdovtS2QBq1AVaLFyonkp6A2xOD/b2WmBuFlqI/MoefstOzwqhg9v7SeX1j0nIbi30+aJIZi/0uaJl9oocHcCFE60QgnkqGxwQvEbmtu95F7AGwsOJQ1ydTvLJxaQx5+7mte33ClY8mh/tUZWam+kWgZHSVDY2a9IwnMdpIOv3UWJtL2RuBsSSy/wBxq/ICoVEErJZHT1M0j4SHgtIYDGdRIHEFWpaSqdFlirQ9hsRpWa+INx/xUxVFoCT5EOJQ+GqZUtJiGW5IDPIXPblb1DnegUMcwlklc3wmR2X7XKgmY6KombFI0TtvmLNYaXXuBf0O31TqaPRRhvBTpn2NJ5hPRtriOSu0X8lDz9lqGeELLUH8lDz9lqWeEJ/B7f2kcvr+k5DMX+lzRNDMaadAyQbGu180XKBMTqQoO4EIcmO1ghcXJpKgquAi1KYq2naJ42SPiNjmF+aTFq7sNG57dcru7GPVDYKk0sulALhazmjeFSqah+I1ule0sjYLMad3Eqk3JGyv8koccmT+JKSIsZdxJc7WSd5VnYmggBI54CnE2U5SsUB+Zw8/ZapnhWUwcGXEc48MbT1K1bfCrOECIlLyz8ieoZ4xJG5jhcEWIUyQhOJVZOrw+ohkOhcC3cHblVMFb5WdVsZIWv2hQmlbwShw4ibpMjKkApZPs9Yf6s6pvZawbGs6rXdlbwXdlbwWblEt3uRZLs1b5WdVzaCrldZxa0emta3sreCc2maDsWjDiC8cuRUcKoW0sYAHqSd6LjYmtYGpyaAAFBLEkmyv/9k=" style="width:100%;height:100%;object-fit:cover" alt="PROPROMO"/></div>'
@@ -562,6 +552,43 @@ var _fbConnected=false;
 var _fbLastSave=0;
 var _fbLoading=true;
 
+/* ══ SUPABASE SYNC ══ */
+var SUPA_URL='https://rnjaraoansojazlnnsvq.supabase.co';
+var SUPA_KEY='sb_publishable_xNmV-5H0rkKKiGTNqLEvDw_RiLSaGL1';
+var _supaLastSave=0;
+function _supaHdrs(){return {'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Content-Type':'application/json'};}
+
+function supaLoad(cb){
+  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1&select=data',{headers:_supaHdrs()})
+  .then(function(r){return r.json();})
+  .then(function(rows){
+    if(!rows||!rows[0]||!rows[0].data||rows[0].data==='{}'){if(cb)cb(false);return;}
+    var db=JSON.parse(rows[0].data);
+    ['paies','forcages','pdvs'].forEach(function(k){if(!db[k])db[k]=[];});
+    G.db=db;
+    localStorage.setItem('propromo_db',JSON.stringify(G.db));
+    if(G.user){var u2=G.db.utilisateurs.find(function(u){return u.id==G.user.id;});if(u2)G.user=u2;else{G.screen='login';G.user=null;}}
+    _fbConnected=true;
+    console.log('[SUPA] ✅ Chargé');
+    if(cb)cb(true);
+  })
+  .catch(function(e){console.error('[SUPA] Load:',e.message);if(cb)cb(false);});
+}
+
+function supaSave(){
+  if(_fbSyncing)return;
+  var now=Date.now();
+  if(now-_supaLastSave<2000)return;
+  _supaLastSave=now;_fbSyncing=true;
+  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
+    method:'PATCH',
+    headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
+    body:JSON.stringify({data:JSON.stringify(G.db),updated_at:new Date().toISOString()})
+  })
+  .then(function(r){_fbSyncing=false;_fbConnected=true;_fbLastSync=tn();console.log('[SUPA] ✅ Sauvé',r.status);render();})
+  .catch(function(e){_fbSyncing=false;console.error('[SUPA] Save:',e.message);setTimeout(supaSave,5000);});
+}
+
 var _FB_CFG={
   apiKey:"AIzaSyBCMnWbmHMeO_LpHA1IXsSw7qGeYsxzq5s",
   authDomain:"propromo-7181c.firebaseapp.com",
@@ -573,82 +600,23 @@ var _FB_CFG={
 
 
 function initFirebase(){
-  if(typeof firebase==='undefined'){
-    setTimeout(initFirebase,500);return false;
-  }
-  try{
-    try{firebase.app('propromo').delete();}catch(e){}
-    _fbApp=firebase.initializeApp(_FB_CFG,'propromo');
-    _fbFs=firebase.firestore(_fbApp);
-    _fbConnected=true;
-    console.log('[PROPROMO] Firebase prêt');
-    /* Charger les données au démarrage */
-    fbDocRef().get().then(function(doc){
-      _fbLoading=false;
-      if(doc.exists){
-        var d=doc.data();
-        if(d&&d.db){
-          var fb=JSON.parse(JSON.stringify(d.db));
-          ['paies','forcages','pdvs'].forEach(function(k){if(!fb[k])fb[k]=[];});
-          G.db=fb;
-          localStorage.setItem('propromo_db',JSON.stringify(G.db));
-          if(G.user){var u2=G.db.utilisateurs.find(function(u){return u.id==G.user.id;});if(u2)G.user=u2;else{G.screen='login';G.user=null;}}
-        }
-      } else {
-        if(G.db.organisations&&G.db.organisations.length>0)fbSave();
-      }
-      render();
-    }).catch(function(e){
-      _fbLoading=false;
-      console.warn('[FB] Chargement:',e.message);
-      render();
-    });
-    /* Écoute temps réel */
-    fbDocRef().onSnapshot(function(doc){
-      if(_fbSyncing||!doc.exists)return;
-      if(Date.now()-(_fbLastSave||0)<4000)return;
-      var d=doc.data();
-      if(!d||!d.db)return;
-      var fb=JSON.parse(JSON.stringify(d.db));
-      ['paies','forcages','pdvs'].forEach(function(k){if(!fb[k])fb[k]=[];});
-      if(JSON.stringify(fb)===JSON.stringify(G.db))return;
-      G.db=fb;
-      localStorage.setItem('propromo_db',JSON.stringify(G.db));
-      if(G.user){var u2=G.db.utilisateurs.find(function(u){return u.id==G.user.id;});if(u2)G.user=u2;}
-      render();
-    },function(e){
-      _fbLoading=false;
-      console.warn('[FB] Snapshot:',e.message);
-    });
-    setTimeout(function(){if(_fbLoading){_fbLoading=false;render();}},6000);
-    return true;
-  }catch(e){
-    console.error('[FB] Init:',e.message);
-    _fbLoading=false;render();return false;
-  }
+  console.log('[SUPA] Connexion Supabase...');
+  supaLoad(function(ok){
+    _fbLoading=false;
+    if(!ok&&G.db.organisations&&G.db.organisations.length>0){supaSave();}
+    render();
+    setInterval(function(){
+      if(!_fbSyncing&&Date.now()-_supaLastSave>8000){supaLoad(function(ok){if(ok)render();});}
+    },10000);
+  });
+  return true;
 }
 
 function fbDocRef(){
   return _fbFs.collection('propromo').doc('propromo_7181c');
 }
 
-function fbSave(){
-  if(!_fbFs||!_fbConnected)return;
-  var now=Date.now();
-  if(now-(_fbLastSave||0)<1500)return;
-  _fbLastSave=now;
-  _fbSyncing=true;
-  fbDocRef().set({db:G.db,updated:new Date().toISOString()})
-    .then(function(){
-      _fbSyncing=false;_fbConnected=true;_fbLastSync=tn();
-      console.log('[PROPROMO] ✅ Sauvegardé');
-    })
-    .catch(function(e){
-      _fbSyncing=false;
-      console.warn('[FB] Save:',e.message);
-      setTimeout(fbSave,5000);
-    });
-}
+function fbSave(){supaSave();}
 
 
 
@@ -3792,35 +3760,22 @@ function forcerSync(){
 function testFirebase(){
   var res=document.getElementById('fb-test-result');
   if(!res)return;
-  res.innerHTML='<div style="color:#F97316">⏳ Test en cours (max 10s)...</div>';
-
-  /* Timeout de sécurité */
-  var testTimeout=setTimeout(function(){
-    res.innerHTML='<div style="color:#EF4444">⏰ Timeout 10s — vérifiez votre connexion</div>';
-  },10000);
-
-  /* TEST 1: Écriture Realtime Database */
-  fetch(RTDB_URL,{method:'PUT',mode:'no-cors',
-    body:JSON.stringify({db:G.db,updated:new Date().toISOString(),test:Date.now()})})
-    .then(function(){
-      clearTimeout(testTimeout);
-      _fbConnected=true;
-      res.innerHTML='<div style="color:#16A34A">✅ ÉCRITURE OK (no-cors) — données envoyées</div>';
-      return fetch(RTDB_URL);
-    })
-    .then(function(r){return r.json();})
-    .then(function(data){
-      var orgs=(data&&data.db&&data.db.organisations)||[];
-      res.innerHTML+='<div style="color:#16A34A">✅ LECTURE OK — '+orgs.length+' entreprise(s)</div>';
-      res.innerHTML+='<div style="color:#2563EB;font-size:12px;margin-top:4px">'+
-        (orgs.map(function(o){return o.nom;}).join(', ')||'Aucune entreprise')+'</div>';
-    })
-    .catch(function(e){
-      clearTimeout(testTimeout);
-      _fbConnected=false;
-      res.innerHTML='<div style="color:#EF4444">❌ ERREUR: '+e.message+'</div>';
-      res.innerHTML+='<div style="font-size:11px;color:#64748B;margin-top:4px">Vérifiez les règles Firebase (Firestore → Règles)</div>';
+  res.innerHTML='<div style="color:#F97316">⏳ Test Supabase en cours...</div>';
+  var t=setTimeout(function(){res.innerHTML='<div style="color:#EF4444">⏰ Timeout 10s</div>';},10000);
+  supaSave();
+  setTimeout(function(){
+    supaLoad(function(ok){
+      clearTimeout(t);
+      if(ok){
+        var orgs=G.db.organisations||[];
+        res.innerHTML='<div style="color:#16A34A">✅ SUPABASE OK — '+orgs.length+' entreprise(s)</div>'
+          +'<div style="font-size:12px;color:#2563EB;margin-top:4px">'+(orgs.map(function(o){return o.nom;}).join(', ')||'Aucune')+'</div>';
+        _fbConnected=true;render();
+      } else {
+        res.innerHTML='<div style="color:#EF4444">❌ Supabase ne répond pas</div>';
+      }
     });
+  },2000);
 }
 function checkAppStatus(){
   var FIREBASE_PROJECT='propromo-7181c';
