@@ -585,7 +585,7 @@ function supaSave(){
     headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
     body:JSON.stringify({data:JSON.stringify(G.db),updated_at:new Date().toISOString()})
   })
-  .then(function(r){_fbSyncing=false;_fbConnected=true;_fbLastSync=tn();console.log('[SUPA] ✅ Sauvé',r.status);render();})
+  .then(function(r){_fbSyncing=false;_fbConnected=true;_fbLastSync=tn();console.log('[SUPA] ✅ Sauvé',r.status);})
   .catch(function(e){_fbSyncing=false;console.error('[SUPA] Save:',e.message);setTimeout(supaSave,5000);});
 }
 
@@ -3760,22 +3760,38 @@ function forcerSync(){
 function testFirebase(){
   var res=document.getElementById('fb-test-result');
   if(!res)return;
-  res.innerHTML='<div style="color:#F97316">⏳ Test Supabase en cours...</div>';
-  var t=setTimeout(function(){res.innerHTML='<div style="color:#EF4444">⏰ Timeout 10s</div>';},10000);
-  supaSave();
-  setTimeout(function(){
-    supaLoad(function(ok){
-      clearTimeout(t);
-      if(ok){
-        var orgs=G.db.organisations||[];
-        res.innerHTML='<div style="color:#16A34A">✅ SUPABASE OK — '+orgs.length+' entreprise(s)</div>'
-          +'<div style="font-size:12px;color:#2563EB;margin-top:4px">'+(orgs.map(function(o){return o.nom;}).join(', ')||'Aucune')+'</div>';
-        _fbConnected=true;render();
-      } else {
-        res.innerHTML='<div style="color:#EF4444">❌ Supabase ne répond pas</div>';
-      }
+  res.innerHTML='<div style="color:#F97316">⏳ Test 1/2 — Lecture Supabase...</div>';
+
+  /* TEST 1: Lecture (GET simple, pas de CORS preflight) */
+  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1&select=data',{headers:_supaHdrs()})
+  .then(function(r){
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    res.innerHTML='<div style="color:#16A34A">✅ LECTURE OK — Supabase accessible</div>';
+    return r.json();
+  })
+  .then(function(rows){
+    var orgs=0;
+    try{if(rows&&rows[0]&&rows[0].data)orgs=(JSON.parse(rows[0].data).organisations||[]).length;}catch(e){}
+    res.innerHTML+='<div style="color:#2563EB;font-size:12px">'+orgs+' entreprise(s) dans Supabase</div>';
+    res.innerHTML+='<div style="color:#F97316;margin-top:8px">⏳ Test 2/2 — Écriture...</div>';
+
+    /* TEST 2: Écriture (PATCH avec CORS preflight) */
+    return fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
+      method:'PATCH',
+      headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
+      body:JSON.stringify({data:JSON.stringify(G.db),updated_at:new Date().toISOString()})
     });
-  },2000);
+  })
+  .then(function(r){
+    if(!r.ok&&r.status!==0)throw new Error('HTTP '+r.status);
+    _fbConnected=true;
+    res.innerHTML='<div style="color:#16A34A">✅ LECTURE OK<br/>✅ ÉCRITURE OK — Sync opérationnel !</div>';
+    setTimeout(render,2000);
+  })
+  .catch(function(e){
+    res.innerHTML='<div style="color:#EF4444">❌ Erreur: '+e.message+'</div>'
+      +'<div style="font-size:12px;color:#64748B;margin-top:4px">Supabase URL: '+SUPA_URL+'</div>';
+  });
 }
 function checkAppStatus(){
   var FIREBASE_PROJECT='propromo-7181c';
