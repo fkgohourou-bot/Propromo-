@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="PROPROMO">
 <meta name="theme-color" content="#F97316">
@@ -185,8 +185,7 @@ span[style*="font-size:2"]{vertical-align:middle;line-height:1;}
 </div>
 <div id="inv" class="inv"></div>
 <!-- Firebase SDK v9 compat — chargé avant le script principal -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
 <script></script>
 <script>
 var TODAY=new Date().toISOString().split('T')[0];
@@ -239,7 +238,7 @@ pForm:{id:null,nom:'',emoji:'',ratio:'',desc:'',actif:true},
 cForm:{id:null,nom:'',emoji:'',qte:''},
 shiftId:null,counter:0,
 civ:'',nomP:'',telP:'',achat:null,
-selProds:[],prodDropdowns:[null],sesPhoto:null,sesPhotos:[],lightboxSrc:null,liveMsg:null,sesGpsLat:null,sesGpsLng:null,sesObservation:'',fErr:'',confirmCloture:false,
+selProds:[],prodDropdowns:[null],sesPhoto:null,sesPhotos:[],lightboxSrc:null,liveMsg:null,liveMsgText:'',sesGpsLat:null,sesGpsLng:null,sesObservation:'',fErr:'',confirmCloture:false,
 promoPTab:'info',promoStep:'pdv',promoPdvId:null,
 promoGpsOk:false,promoGpsRefused:false,promoGpsErrCode:null,promoChangePdv:false,menuOpen:false,canInstall:false,promoGpsLat:null,promoGpsLng:null,degtAge:'',
 promoHeureDebut:null,promoHeureFin:null,
@@ -346,7 +345,7 @@ return '<div class="topbar '+RGRAD[u.role]+'" style="display:flex;align-items:ce
   +'<div style="font-size:11px;color:rgba(255,255,255,.75)">'+RIC[u.role]+' '+RLB[u.role]+(org?' · '+esc(org.nom):'')+'</div>'
   +'</div>'
   /* Bouton sync */
-  +'<button onclick="fbLoad(function(){render();})" style="background:none;border:none;cursor:pointer;padding:6px;color:#fff;font-size:20px;line-height:1;flex-shrink:0">'+(_fbSyncing?'&#8987;':'&#8635;')+'</button>'
+  +'<button onclick="supaLoad(function(ok){if(ok)render();})" style="background:none;border:none;cursor:pointer;padding:6px;color:#fff;font-size:20px;line-height:1;flex-shrink:0">'+(_fbSyncing?'&#8987;':'&#8635;')+'</button>'
   /* Voyant Firebase */
   +'<div style="width:10px;height:10px;border-radius:50%;background:'+(fbSt.ok?'#4ADE80':'#EF4444')+';flex-shrink:0" title="'+fbSt.msg+'"></div>'
   /* Menu hamburger */
@@ -477,9 +476,11 @@ function triggerImport(){
   setTimeout(function(){document.body.removeChild(inp);},2000);
 }
 function openParams(){
-G.prevScreen=G.screen;
-G.screen='params';
-render();
+  try{var _d=document.querySelector('[data-drawer]');if(_d)_d.style.display='none';}catch(e){}
+  G.menuOpen=false;
+  G.prevScreen=G.screen;
+  G.screen='params';
+  render();
 }
 function suppP(id){askConfirm('Supprimer cette promotrice ?',function(){G.db.utilisateurs=G.db.utilisateurs.filter(function(u){return u.id!==id;});render();});}
 function suppUser(id){var u=G.db.utilisateurs.find(function(u){return u.id===id;});if(!u)return;askConfirm('Supprimer '+u.nom+' ?',function(){G.db.utilisateurs=G.db.utilisateurs.filter(function(u2){return u2.id!==id;});render();});}
@@ -564,27 +565,78 @@ function supaLoad(cb){
     if(!rows||!rows[0]||!rows[0].data||rows[0].data==='{}'){if(cb)cb(false);return;}
     var db=JSON.parse(rows[0].data);
     ['paies','forcages','pdvs'].forEach(function(k){if(!db[k])db[k]=[];});
+    /* ── Fusion : garder les enregistrements locaux non encore syncés ── */
+    var _mergeCols=['utilisateurs','pdvs','shifts','degustations','evaluations',
+                    'promotions','messages','paies','forcages','acteurs',
+                    'produits','consommables','stocks'];
+    _mergeCols.forEach(function(k){
+      if(!db[k])db[k]=[];
+      if(G.db&&G.db[k]){
+        G.db[k].forEach(function(local){
+          var _s=db[k].find(function(s){return s.id===local.id;});
+          if(!_s){db[k].push(local);}
+          else{
+            if(local.photos&&local.photos.length>0&&(!_s.photos||!_s.photos.length)){_s.photos=local.photos;}
+            if(local.photo&&!_s.photo)_s.photo=local.photo;
+          }
+        });
+      }
+    });
     G.db=db;
     localStorage.setItem('propromo_db',JSON.stringify(G.db));
     if(G.user){var u2=G.db.utilisateurs.find(function(u){return u.id==G.user.id;});if(u2)G.user=u2;else{G.screen='login';G.user=null;}}
     _fbConnected=true;
     console.log('[SUPA] ✅ Chargé');
+    /* Si des données locales ont été fusionnées → resauvegarder sur Supabase */
+    if(_localDirty){setTimeout(supaSave,800);}
     if(cb)cb(true);
   })
   .catch(function(e){console.error('[SUPA] Load:',e.message);if(cb)cb(false);});
 }
 
+var _supaRendering=false;
+
+function cleanDbForSync(db){
+  /* Supprimer les images trop grandes pour Supabase (>100KB en base64) */
+  var MAX_IMG=100000; /* 100KB */
+  var clean=JSON.parse(JSON.stringify(db));
+  if(clean.organisations){
+    clean.organisations=clean.organisations.map(function(o){
+      if(o.logo&&o.logo.length>MAX_IMG)o.logo=o.logo.substring(0,MAX_IMG);
+      return o;
+    });
+  }
+  if(clean.produits){
+    clean.produits=clean.produits.map(function(p){
+      if(p.image&&p.image.length>MAX_IMG)p.image='';
+      return p;
+    });
+  }
+  /* Photos : vider si total > 200KB pour Supabase (photos restent dans localStorage) */
+  ['shifts','promotions'].forEach(function(k){
+    if(!clean[k])return;
+    clean[k]=clean[k].map(function(s){
+      var out=Object.assign({},s);
+      var tot=(out.photos||[]).reduce(function(a,p){return a+(typeof p==='string'?p.length:p&&p.data?p.data.length:0);},0);
+      if(tot>200000){out.photos=[];out.photo=null;}
+      return out;
+    });
+  });
+  return clean;
+}
 function supaSave(){
-  if(_fbSyncing)return;
+  if(_fbSyncing){if(_localDirty)setTimeout(supaSave,1500);return;}
   var now=Date.now();
-  if(now-_supaLastSave<2000)return;
+  /* Throttle 500ms si dirty, 2000ms sinon */
+  var minDelay=_localDirty?500:2000;
+  if(now-_supaLastSave<minDelay){if(_localDirty)setTimeout(supaSave,minDelay);return;}
   _supaLastSave=now;_fbSyncing=true;
   fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
     method:'PATCH',
     headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
-    body:JSON.stringify({data:JSON.stringify(G.db),updated_at:new Date().toISOString()})
+    body:JSON.stringify({data:JSON.stringify(cleanDbForSync(G.db)),updated_at:new Date().toISOString()})
   })
-  .then(function(r){_fbSyncing=false;_fbConnected=true;_fbLastSync=tn();console.log('[SUPA] ✅ Sauvé',r.status);})
+  .then(function(r){_fbSyncing=false;_fbConnected=true;_fbLastSync=tn();_localDirty=false;console.log('[SUPA] ✅ Sauvé',r.status);})
   .catch(function(e){_fbSyncing=false;console.error('[SUPA] Save:',e.message);setTimeout(supaSave,5000);});
 }
 
@@ -604,9 +656,19 @@ function initFirebase(){
     _fbLoading=false;
     if(!ok&&G.db.organisations&&G.db.organisations.length>0){supaSave();}
     render();
+    /* Pas de polling continu - seulement au chargement initial */
+    /* Sync douce toutes les 30s si aucune saisie active */
     setInterval(function(){
-      if(!_fbSyncing&&Date.now()-_supaLastSave>8000){supaLoad(function(ok){if(ok)render();});}
-    },10000);
+      var active=document.activeElement;
+        var isTyping=active&&(active.tagName==='INPUT'||active.tagName==='TEXTAREA');
+        if(!isTyping){
+          if(_localDirty){supaSave();} /* Données locales non syncées : sauvegarder d'abord */
+          else if(!_fbSyncing&&Date.now()-_supaLastSave>15000){
+            supaLoad(function(ok){if(ok)render();});
+          }
+        }
+    },30000);
+    /* Le bouton ↻ permet une sync manuelle */
   });
   return true;
 }
@@ -643,6 +705,7 @@ function fbLoad(callback){
 }
 
 var _fbLastSync=null;
+var _localDirty=false; /* true = données locales non encore syncées */
 function fbStatus(){
   /* Supabase est le backend principal */
   if(!_fbConnected)return{ok:false,msg:'Hors ligne'};
@@ -696,6 +759,7 @@ try{
   G.db.config.payeDateAu=G.payeDateAu;
   localStorage.setItem('propromo_db',JSON.stringify(G.db));
   /* Sync Firebase si connecté */
+  _localDirty=true;
   fbSave();
   /* Sauver aussi la session active */
   if(G.user){
@@ -1040,22 +1104,30 @@ function respAddComm(){
   var n=(nf.nom||'').trim(),t=(nf.telephone||'').trim();
   if(!n||!t){alert('Nom et téléphone requis.');return;}
   if(G.db.utilisateurs.find(function(u){return u.telephone===t;})){alert('Ce numéro est déjà enregistré.');return;}
-  G.db.utilisateurs.push({id:uid(),org_id:G.user.org_id,nom:n,telephone:t,role:'commercial',statut_compte:'en_attente'});
+  G.db.utilisateurs.push({id:uid(),org_id:G.user.org_id,nom:n,telephone:t,role:'commercial',statut_compte:'en_attente',responsable_id:G.user.id});
   G.modal=null;G.newCommForm={nom:'',telephone:''};render();
 }
 function respAddProm(){
   /* Lire depuis le DOM pour éviter les problèmes de focus mobile */
   var nomEl=document.getElementById('new-prom-nom');
   var telEl=document.getElementById('new-prom-tel');
-  var roleEl=document.getElementById('new-prom-role');
+  var commEl=document.getElementById('new-prom-comm');
   if(nomEl)G.newRespPromNom=nomEl.value;
   if(telEl)G.newRespPromTel=telEl.value;
-  if(roleEl)G.newRespPromRole=roleEl.value;
   var n=(G.newRespPromNom||'').trim(),t=(G.newRespPromTel||'').trim();
-  if(!n||!t){alert('Nom et telephone requis.');return;}
-  if(G.db.utilisateurs.find(function(u){return u.telephone===t;})){alert('Ce numero est deja enregistre.');return;}
-  var role=G.newRespPromRole||'promotrice';
-  G.db.utilisateurs.push({id:uid(),org_id:G.user.org_id,nom:n,telephone:t,role:role,statut_compte:role==='commercial'?'actif':'en_attente'});
+  if(!n){
+    alert('Le nom complet est requis.');
+    if(nomEl){nomEl.focus();setTimeout(function(){nomEl.scrollIntoView({behavior:'smooth',block:'center'});},100);}
+    return;
+  }
+  if(!t){
+    alert('Le numéro de téléphone est requis.');
+    if(telEl){telEl.focus();setTimeout(function(){telEl.scrollIntoView({behavior:'smooth',block:'center'});},100);}
+    return;
+  }
+  if(G.db.utilisateurs.find(function(u){return u.telephone===t;})){alert('Ce numéro est déjà enregistré.');return;}
+  var commId=commEl&&commEl.value?parseInt(commEl.value)||null:null;
+  G.db.utilisateurs.push({id:uid(),org_id:G.user.org_id,nom:n,telephone:t,role:'promotrice',statut_compte:'en_attente',commercial_id:commId});
   G.modal=null;G.newRespPromNom='';G.newRespPromTel='';G.newRespPromRole='promotrice';render();
 }
 function respCreateComm(){
@@ -1810,12 +1882,13 @@ inner='<h3 style="font-size:17px;font-weight:900;color:#1A2B4A;margin-bottom:14p
     +'<div style="display:flex;gap:10px"><button class="btn btn-ghost" style="flex:1" onclick="G.modal=null;render()">Annuler</button>'
     +'<button class="btn go" style="flex:2" onclick="respAddComm()">Ajouter</button></div>';
 }
-if(G.modal==='add_prom'){inner='<h3 style="font-size:18px;font-weight:900;color:#1A2B4A;margin-bottom:16px">&#128105; Ajouter une Promotrice/Commercial</h3><div class="field"><label>Nom complet <span class=\'req\'>*</span></label><input type="text" id="new-prom-nom" placeholder="Prenom Nom" value="'+(G.newRespPromNom||'')+'" style="-webkit-user-select:text;user-select:text;pointer-events:auto;opacity:1;font-size:16px" autocomplete="off"/></div><div class="field"><label>Téléphone <span class=\'req\'>*</span></label><input type="tel" id="new-prom-tel" placeholder="07 XX XX XX XX" value="'+(G.newRespPromTel||'')+'" oninput="G.newRespPromTel=this.value" style="-webkit-user-select:auto;user-select:auto"/></div><div class="field"><label>Rôle</label><select id="new-prom-role" onchange="G.newRespPromRole=this.value"><option value="promotrice"'+(G.newRespPromRole!=='commercial'?' selected':'')+'>Promotrice</option><option value="commercial"'+(G.newRespPromRole==='commercial'?' selected':'')+'>Commercial</option></select></div><p style="font-size:12px;color:#94A3B8;margin-bottom:14px">En attente de validation.</p><div style="display:flex;gap:10px"><button class="btn btn-ghost" style="flex:1" onclick="G.modal=null;render()">Annuler</button><button class="btn gp" style="flex:2" onclick="respAddProm()">Ajouter</button></div>';}
+if(G.modal==='add_prom'){var _cp=G.db.utilisateurs.filter(function(cu){return cu.org_id===G.user.org_id&&cu.role==='commercial'&&cu.statut_compte==='actif';});inner='<h3 style="font-size:18px;font-weight:900;color:#1A2B4A;margin-bottom:16px">&#128105; Ajouter une Promotrice</h3><div class="field"><label>Nom complet <span class=\'req\'>*</span></label><input type="text" id="new-prom-nom" placeholder="Prenom Nom" value="'+(G.newRespPromNom||'')+'" oninput="G.newRespPromNom=this.value" style="-webkit-user-select:text;user-select:text;pointer-events:auto;opacity:1;font-size:16px" autocomplete="off"/></div><div class="field"><label>Téléphone <span class=\'req\'>*</span></label><input type="tel" id="new-prom-tel" placeholder="07 XX XX XX XX" value="'+(G.newRespPromTel||'')+'" oninput="G.newRespPromTel=this.value" style="-webkit-user-select:auto;user-select:auto"/></div><div class="field"><label>&#128227; Commercial responsable</label><select id="new-prom-comm" style="width:100%;padding:13px;border:1.5px solid #E2E8F0;border-radius:12px;font-size:15px;font-family:inherit;background:#fff;color:#1A2B4A"><option value="">-- Aucun --</option>'+_cp.map(function(cm){return '<option value="'+cm.id+'">'+esc(cm.nom)+'</option>';}).join('')+'</select></div>'+(_cp.length===0?'<div style="background:#FEF3C7;border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:13px;color:#92400E">&#9888; Aucun commercial actif. Ajoutez d\'abord un commercial.</div>':'')+' <p style="font-size:12px;color:#94A3B8;margin-bottom:14px">En attente de validation par le Super Admin.</p><div style="display:flex;gap:10px"><button class="btn btn-ghost" style="flex:1" onclick="G.modal=null;render()">Annuler</button><button class="btn gp" style="flex:2" onclick="respAddProm()">Ajouter</button></div>';}
   if(G.modal==='live-msg'){
   var lm=G.liveMsg||{};
   inner='<div style="font-size:17px;font-weight:900;color:#1A2B4A;margin-bottom:14px">&#128172; Message à '+esc(lm.nom||'')+' </div>'
-    +'<textarea id="live-msg-input" rows="3" placeholder="Votre message..." style="width:100%;padding:12px;border:1.5px solid #E2E8F0;border-radius:12px;font-size:15px;font-family:inherit;resize:none;margin-bottom:12px"></textarea>'
-    +'<button onclick="var t=document.getElementById(\'live-msg-input\');if(!t||!t.value.trim()){alert(\'Tapez un message.\');return;}G.db.messages.push({id:uid(),org_id:G.user.org_id,texte:t.value.trim(),auteur:G.user.nom,date:new Date().toISOString(),heure:tn(),type:\'direct\',dest_id:'+(lm.pid||0)+'});G.modal=null;render();alert(\'Message envoyé !\');" style="width:100%;border:none;border-radius:12px;padding:14px;background:linear-gradient(135deg,#2563EB,#1D4ED8);color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit">Envoyer &#128172;</button>';
+    +'<textarea id="live-msg-input" rows="4" placeholder="Votre message..." oninput="G.liveMsgText=this.value" style="width:100%;box-sizing:border-box;padding:12px;border:1.5px solid #E2E8F0;border-radius:12px;font-size:15px;font-family:inherit;resize:none;margin-bottom:12px;-webkit-user-select:text;user-select:text">'+esc(G.liveMsgText||'')+'</textarea>'
+    +'<div style="display:flex;gap:10px"><button class="btn btn-ghost" style="flex:1" onclick="G.liveMsgText=\'\';G.modal=null;render()">Annuler</button>'
+    +'<button onclick="sendLiveMsg()" style="flex:2;border:none;border-radius:12px;padding:14px;background:linear-gradient(135deg,#2563EB,#1D4ED8);color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit">Envoyer &#128172;</button></div>';
 }
 if(G.modal==='facture_type'){
   var orgF=G.db.organisations.find(function(o){return o.id===G.factureOrgId;});
@@ -2242,8 +2315,10 @@ u.statut_compte=u.statut_compte==='actif'?'suspendu':'actif';render();
 function rResp(){
 var db=G.db,u=G.user;
 var tarif=db.tarifs[u.org_id]||5000;
-var proms=db.utilisateurs.filter(function(u2){return u2.org_id===u.org_id&&u2.role==='promotrice';});
-var comms=db.utilisateurs.filter(function(u2){return u2.org_id===u.org_id&&u2.role==='commercial';});
+/* ── Utilisateurs liés à CE responsable ── */
+var comms=db.utilisateurs.filter(function(u2){return u2.org_id===u.org_id&&u2.role==='commercial'&&(u2.responsable_id===u.id||!u2.responsable_id);});
+var commIds=comms.map(function(c){return c.id;});
+var proms=db.utilisateurs.filter(function(u2){return u2.org_id===u.org_id&&u2.role==='promotrice'&&(!u2.commercial_id||commIds.indexOf(u2.commercial_id)!==-1);});
 var prods=db.produits.filter(function(p){return p.org_id===u.org_id;});
 var msgs=db.messages.filter(function(m){return m.org_id===u.org_id;});
 var consos=db.consommables.filter(function(c){return c.org_id===u.org_id;});
@@ -2253,251 +2328,286 @@ var evs=db.evaluations.filter(function(ev){return degs.some(function(d){return d
 var sClot=shifts.filter(function(s){return s.statut==='Cloture';});
 var tab=G.respTab,content='';
 if(tab==='dashboard'){
-var proms2=db.utilisateurs.filter(function(u2){return u2.org_id===u.org_id&&u2.role==='promotrice'&&u2.statut_compte==='actif';});
-var allShifts=db.shifts.filter(function(s){return proms2.some(function(p){return p.id===s.promotrice_id;});});
-var allDeg=db.degustations.filter(function(d){return allShifts.some(function(s){return s.id===d.sid;});});
-var allEvals=db.evaluations||[];
-var allPromos=db.promotions||[];
-var orgPromos=allPromos.filter(function(p){return p.org_id===u.org_id;});
+/* ── Période par défaut : début du mois courant → aujourd'hui ── */
+if(!G.dashFrom){G.dashFrom=TODAY.substring(0,7)+'-01';}
+if(!G.dashTo){G.dashTo=TODAY;}
+
+var _myComms2=db.utilisateurs.filter(function(u2){return u2.org_id===u.org_id&&u2.role==='commercial'&&(u2.responsable_id===u.id||!u2.responsable_id);});
+var _myCommIds2=_myComms2.map(function(c){return c.id;});
+var proms2=db.utilisateurs.filter(function(u2){return u2.org_id===u.org_id&&u2.role==='promotrice'&&u2.statut_compte==='actif'&&(!u2.commercial_id||_myCommIds2.indexOf(u2.commercial_id)!==-1);});
+
+/* ── Données filtrées par période ── */
+var periodShifts=db.shifts.filter(function(s){return s.date>=G.dashFrom&&s.date<=G.dashTo&&proms2.some(function(p){return p.id===s.promotrice_id;});});
+var periodDeg=db.degustations.filter(function(d){return periodShifts.some(function(s){return s.id===d.sid;});});
+var periodEvals=(db.evaluations||[]).filter(function(e){return periodDeg.some(function(d){return d.id===e.did;});});
 
 /* ── KPIs Dégustation ── */
-/* ══ KPIs DÉGUSTATION ══ */
-/* Dégustation = nb de personnes ayant dégusté */
-var nbDeg=allDeg.length;
-/* Achat = nb de personnes ayant acheté */
-var nbAch=allDeg.filter(function(d){return d.achat;}).length;
-/* Conversion = % de personnes ayant acheté parmi celles qui ont dégusté */
+var nbDeg=periodDeg.length;
+var nbAch=periodDeg.filter(function(d){return d.achat;}).length;
 var txConv=nbDeg?Math.round(nbAch/nbDeg*100):0;
-/* Session = nb de promotrices en activité (shifts actifs) */
-var nbSessions=allShifts.filter(function(sh){return sh.statut==='En cours';}).length;
-var nbSessionsTotal=allShifts.length;
-/* Dég/session = nb de dégustations par rapport aux sessions actives */
-var avgDegSess=nbSessionsTotal?Math.round(nbDeg/nbSessionsTotal*10)/10:0;
-/* Satisfaction */
-var txSat=allEvals.length?Math.round(allEvals.filter(function(e){return e.avis==='excellent'||e.avis==='bon';}).length/allEvals.length*100):0;
-/* ── Tranches d'âge ── */
-var degsAge=allDeg.filter(function(d){return d.tranche_age;});
-var nbTotal=degsAge.length||1;
-var tx1825=nbDeg?Math.round(allDeg.filter(function(d){return d.tranche_age==='18-25';}).length/nbDeg*100):0;
-var tx2540=nbDeg?Math.round(allDeg.filter(function(d){return d.tranche_age==='25-40';}).length/nbDeg*100):0;
-var tx40p=nbDeg?Math.round(allDeg.filter(function(d){return d.tranche_age==='40+';}).length/nbDeg*100):0;
+var nbSessions=periodShifts.length;
+var avgDeg=nbSessions?Math.round(nbDeg/nbSessions*10)/10:0;
+var nbSat=periodEvals.filter(function(e){return e.avis==='excellent'||e.avis==='bon';}).length;
 
-/* ── KPIs Promotion ── */
-var nbPdvActifs=orgPromos.length;
-var totalCartonsVendus=orgPromos.reduce(function(acc,p){return acc+(p.cartons||0);},0);
-var totalFG=orgPromos.reduce(function(acc,p){return acc+(p.fg||0);},0);
+/* ── Tranches d'âge — lire degtAge (nouveau) ou tranche_age (ancien) ── */
+var nb1825=periodDeg.filter(function(d){return (d.degtAge||d.tranche_age)==='18-25';}).length;
+var nb2540=periodDeg.filter(function(d){return (d.degtAge||d.tranche_age)==='25-40';}).length;
+var nb40p=periodDeg.filter(function(d){return (d.degtAge||d.tranche_age)==='40+';}).length;
+/* % pour la barre visuelle */
+var tx1825=nbDeg?Math.round(nb1825/nbDeg*100):0;
+var tx2540=nbDeg?Math.round(nb2540/nbDeg*100):0;
+var tx40p=nbDeg?Math.round(nb40p/nbDeg*100):0;
 
-/* ── Par Promotrice ── */
-var promStats=proms2.map(function(p){
-  var sh=allShifts.filter(function(s){return s.promotrice_id===p.id;});
-  var dg=allDeg.filter(function(d){return sh.some(function(s){return s.id===d.sid;});});
-  var ach=dg.filter(function(d){return d.achat;}).length;
-  var tx=dg.length?Math.round(ach/dg.length*100):0;
-  var promo=orgPromos.filter(function(pr){return pr.promotrice_id===p.id;});
-  var cartons=promo.reduce(function(acc,pr){return acc+(pr.cartons||0);},0);
-  return {nom:p.nom,id:p.id,jours:sh.length,deg:dg.length,ach:ach,tx:tx,cartons:cartons};
-});
+/* ── Genre via civ (Monsieur/Madame) ── */
+var nbH=periodDeg.filter(function(d){return d.civ==='Monsieur'||d.genre==='homme';}).length;
+var nbF=periodDeg.filter(function(d){return d.civ==='Madame'||d.genre==='femme';}).length;
 
-/* ── Avis / Satisfaction ── */
+/* ── Satisfaction ── */
 var avisStats={excellent:0,bon:0,moyen:0,mauvais:0};
-allEvals.forEach(function(e){if(avisStats[e.avis]!==undefined)avisStats[e.avis]++;});
-var totalAvis=allEvals.length||1;
+periodEvals.forEach(function(e){if(avisStats[e.avis]!==undefined)avisStats[e.avis]++;});
+var totalAvis=periodEvals.length||1;
 
-var degHeader='<div style="display:flex;align-items:center;gap:8px;margin-bottom:'+(G.dashColDeg?'0':'14px')+'px">'
-  +'<div style="font-size:13px;font-weight:900;color:#1A2B4A">&#127973; Activité Dégustation</div>'
-  +'<button onclick="G.dashColDeg=!G.dashColDeg;render()" style="margin-left:auto;border:none;background:#F1F5F9;border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer;color:#64748B">'+(G.dashColDeg?'&#9660; Voir':'&#9650; Réduire')+'</button>'
-  +'</div>';
-var promoHeader='<div style="display:flex;align-items:center;gap:8px;margin-bottom:'+(G.dashColPromo?'0':'14px')+'px">'
-  +'<div style="font-size:13px;font-weight:900;color:#1A2B4A">&#127919; Activité Promotion / ACTIVATION</div>'
-  +'<button onclick="G.dashColPromo=!G.dashColPromo;render()" style="margin-left:auto;border:none;background:#F1F5F9;border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer;color:#64748B">'+(G.dashColPromo?'&#9660; Voir':'&#9650; Réduire')+'</button>'
-  +'</div>';
-content=''
+/* ── KPIs Promotion / Activation ── */
+var pdvsOrg=(db.pdvs||[]).filter(function(p){return p.org_id===u.org_id;});
+var periodPromos=(db.promotions||[]).filter(function(pr){
+  if(!pr.date||pr.date<G.dashFrom||pr.date>G.dashTo)return false;
+  if(pr.promotrice_id){var pm=db.utilisateurs.find(function(u2){return u2.id===pr.promotrice_id;});return !!(pm&&pm.org_id===u.org_id);}
+  if(pr.commercial_id){var cm=db.utilisateurs.find(function(u2){return u2.id===pr.commercial_id;});return !!(cm&&cm.org_id===u.org_id);}
+  return false;
+});
+/* PDV actifs = PDVs activés par un commercial sur la période
+   (commercial a choisi le PDV, approvisionné, affecté une promotrice) */
+var nbPdvActifs=[...new Set(
+  periodPromos
+    .filter(function(pr){return pr.commercial_id&&pr.pdv_id;})
+    .map(function(pr){return pr.pdv_id;})
+)].length;
+/* Promotrices affectées = promotrices distinctes qu'un commercial a affectées
+   via l'onglet Affectation Promotrice dans Activation (promotion avec commercial_id + promotrice_id) */
+var nbPromAff=[...new Set(
+  periodPromos
+    .filter(function(pr){return pr.commercial_id&&pr.promotrice_id;})
+    .map(function(pr){return pr.promotrice_id;})
+)].length;
+var nbPromPresentes=[...new Set(periodShifts.filter(function(s){return s.statut==='Cloture';}).map(function(s){return s.promotrice_id;}))].length;
+var cartonsVendus=periodPromos.reduce(function(a,pr){return a+(+pr.cartons||0);},0);
+var nbPdvActives=[...new Set(periodPromos.filter(function(pr){return pr.pdv_id;}).map(function(pr){return pr.pdv_id;}))].length;
 
-
-+'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">'
-+'<div class="stat-box" title="Nombre de personnes ayant dégusté"><div style="font-size:26px;font-weight:900;color:#DB2877">'+nbDeg+'</div><div style="font-size:11px;color:#64748B;margin-top:3px">Dégustations</div></div>'
-+'<div class="stat-box" title="% de personnes ayant acheté parmi celles qui ont dégusté"><div style="font-size:26px;font-weight:900;color:#16A34A">'+txConv+'%</div><div style="font-size:11px;color:#64748B;margin-top:3px">Conversion</div></div>'
-+'<div class="stat-box" title="Nombre de promotrices en activité"><div style="font-size:26px;font-weight:900;color:#2563EB">'+nbSessions+'</div><div style="font-size:11px;color:#64748B;margin-top:3px">Sessions actives</div></div>'
-+'<div class="stat-box" title="Nombre de dégustations par session"><div style="font-size:22px;font-weight:900;color:#F97316">'+avgDegSess+'</div><div style="font-size:11px;color:#64748B;margin-top:3px">Dég./session</div></div>'
-+'<div class="stat-box" title="Nombre de personnes ayant acheté"><div style="font-size:22px;font-weight:900;color:#7C3AED">'+nbAch+'</div><div style="font-size:11px;color:#64748B;margin-top:3px">Achat (pers.)</div></div>'
-+'<div class="stat-box"><div style="font-size:22px;font-weight:900;color:'+(txSat>=70?'#16A34A':'#F97316')+'">'+txSat+'%</div><div style="font-size:11px;color:#64748B;margin-top:3px">Satisfaction</div></div>'
-+'</div>'
-+'<div style="margin-top:14px;background:#F8FAFC;border-radius:12px;padding:12px 14px">'
-+'<div style="font-size:11px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">&#128101; Tranches d\'âge des dégustateurs</div>'
-+'<div style="display:flex;gap:8px">'
-+'<div style="flex:1;text-align:center;background:#fff;border-radius:10px;padding:10px 6px">'
-+'<div style="font-size:20px;font-weight:900;color:#2563EB">'+tx1825+'%</div>'
-+'<div style="font-size:10px;color:#64748B;margin-top:2px">18–25 ans</div></div>'
-+'<div style="flex:1;text-align:center;background:#fff;border-radius:10px;padding:10px 6px">'
-+'<div style="font-size:20px;font-weight:900;color:#DB2877">'+tx2540+'%</div>'
-+'<div style="font-size:10px;color:#64748B;margin-top:2px">25–40 ans</div></div>'
-+'<div style="flex:1;text-align:center;background:#fff;border-radius:10px;padding:10px 6px">'
-+'<div style="font-size:20px;font-weight:900;color:#7C3AED">'+tx40p+'%</div>'
-+'<div style="font-size:10px;color:#64748B;margin-top:2px">40 ans et +</div></div>'
+content=
+/* ═══ FILTRE PÉRIODE ═══ */
+'<div class="card" style="margin-bottom:12px">'
++'<div style="font-size:13px;font-weight:900;color:#1A2B4A;margin-bottom:10px">&#128197; Période</div>'
++'<div style="display:flex;gap:10px">'
++'<div style="flex:1"><div style="font-size:11px;color:#64748B;font-weight:700;margin-bottom:4px">De</div>'
++'<input type="date" value="'+G.dashFrom+'" onchange="G.dashFrom=this.value;render()" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid #E2E8F0;border-radius:10px;font-size:14px;font-family:inherit;color:#1A2B4A"></div>'
++'<div style="flex:1"><div style="font-size:11px;color:#64748B;font-weight:700;margin-bottom:4px">À</div>'
++'<input type="date" value="'+G.dashTo+'" onchange="G.dashTo=this.value;render()" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid #E2E8F0;border-radius:10px;font-size:14px;font-family:inherit;color:#1A2B4A"></div>'
 +'</div></div>'
 
-/* ═══ SATISFACTION CHART ═══ */
+/* ═══ SECTION 1 — DÉGUSTATION ═══ */
 +'<div class="card" style="margin-bottom:12px">'
-+'<div style="font-size:13px;font-weight:800;color:#1A2B4A;margin-bottom:12px">&#127775; Satisfaction clients</div>'
-+'<div style="display:flex;gap:6px;flex-direction:column">'
-+[['Excellent','#16A34A',avisStats.excellent],['Bon','#2563EB',avisStats.bon],['Moyen','#F97316',avisStats.moyen],['Mauvais','#DC2626',avisStats.mauvais]].map(function(a){
-  var pct=Math.round(a[2]/totalAvis*100);
-  return '<div style="display:flex;align-items:center;gap:8px"><div style="width:60px;font-size:12px;color:#64748B;text-align:right">'+a[0]+'</div>'
-    +'<div style="flex:1;background:#F1F5F9;border-radius:6px;height:20px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+a[1]+';border-radius:6px;transition:width .3s"></div></div>'
-    +'<div style="width:40px;font-size:12px;font-weight:800;color:'+a[1]+'">'+pct+'%</div></div>';
-}).join('')
++'<div style="font-size:13px;font-weight:900;color:#1A2B4A;margin-bottom:12px">&#127868; Dégustation</div>'
++'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'
++'<div class="stat-box" title="Personnes ayant dégusté"><div style="font-size:26px;font-weight:900;color:#DB2877">'+nbDeg+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">Dégustations</div></div>'
++'<div class="stat-box" title="Personnes satisfaites (excellent + bon)"><div style="font-size:26px;font-weight:900;color:#16A34A">'+nbSat+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">Satisfaits</div></div>'
++'<div class="stat-box" title="% achats / dégustations"><div style="font-size:26px;font-weight:900;color:#2563EB">'+txConv+'%</div><div style="font-size:10px;color:#64748B;margin-top:3px">Conversion</div></div>'
++'<div class="stat-box" title="Nombre de sessions sur la période"><div style="font-size:22px;font-weight:900;color:#F97316">'+nbSessions+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">Sessions</div></div>'
++'<div class="stat-box" title="Nombre de personnes ayant acheté"><div style="font-size:22px;font-weight:900;color:#7C3AED">'+nbAch+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">Achats</div></div>'
++'<div class="stat-box" title="Moyenne dégustations par session"><div style="font-size:22px;font-weight:900;color:#0891B2">'+avgDeg+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">Moy. Dég.</div></div>'
 +'</div></div>'
 
-/* ═══ KPI PROMOTION - DÉTAIL PDV ═══ */
-+(function(){
-  var pdvsOrg=(db.pdvs||[]).filter(function(p){return p.org_id===u.org_id;});
-  var pdvsActives=orgPromos.map(function(pr){return pr.pdv_id;}).concat(pdvsOrg.filter(function(p){return p.commercial_id||p.promotrice_id;}).map(function(p){return p.id;}));
-  var pdvsActivesUniq=[...new Set(pdvsActives)];
-  var nbPdvsActives=pdvsActivesUniq.length;
-  var nbPromotricesAff=pdvsOrg.filter(function(p){return p.promotrice_id;}).length;
-  var nbPresentes=allShifts.filter(function(s){return s.date===TODAY&&s.statut==='En cours';}).length;
-  var nbCloturees=allShifts.filter(function(s){return s.date===TODAY&&s.statut==='Cloture';}).length;
-  var prods2=db.produits.filter(function(p){return p.org_id===u.org_id;});
-  var totalUnites=orgPromos.reduce(function(acc,pr){
-    var prod=prods2.find(function(p){return p.id===pr.produit_id;});
-    var ratio=prod?prod.ratio:1;
-    return acc+(+pr.cartons||0)*ratio+(+pr.fg||0)*ratio;
-  },0);
-  return '<div style="font-size:15px;font-weight:900;color:#1A2B4A;margin-bottom:10px">&#128205; Activation / Promotion</div>'
-    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">'
-    +'<div class="stat-box"><div style="font-size:22px;font-weight:900;color:#F97316">'+nbPdvsActives+'</div><div style="font-size:10px;color:#64748B;margin-top:2px">PDVs activés</div></div>'
-    +'<div class="stat-box"><div style="font-size:22px;font-weight:900;color:#DB2777">'+nbPromotricesAff+'</div><div style="font-size:10px;color:#64748B;margin-top:2px">Promotrices affectées</div></div>'
-    +'<div class="stat-box"><div style="font-size:22px;font-weight:900;color:'+(nbPresentes>0?'#16A34A':'#94A3B8')+'">'+nbPresentes+'</div><div style="font-size:10px;color:#64748B;margin-top:2px">Présentes auj.</div></div>'
-    +'<div class="stat-box"><div style="font-size:22px;font-weight:900;color:#2563EB">'+totalCartonsVendus+'</div><div style="font-size:10px;color:#64748B;margin-top:2px">Cartons vendus</div></div>'
-    +'<div class="stat-box"><div style="font-size:22px;font-weight:900;color:#16A34A">'+totalFG+'</div><div style="font-size:10px;color:#64748B;margin-top:2px">Cartons FG</div></div>'
-    +'<div class="stat-box"><div style="font-size:22px;font-weight:900;color:#7C3AED">'+totalUnites+'</div><div style="font-size:10px;color:#64748B;margin-top:2px">Unités totales</div></div>'
-    +'</div>'
-    +(nbCloturees>0||nbPresentes>0?'<div style="display:flex;gap:8px;margin-bottom:14px">'
-      +'<div style="flex:1;background:#DCFCE7;border-radius:12px;padding:12px;text-align:center">'
-      +'<div style="font-size:18px;font-weight:900;color:#16A34A">'+nbPresentes+'</div>'
-      +'<div style="font-size:11px;color:#16A34A">En cours</div></div>'
-      +'<div style="flex:1;background:#EFF6FF;border-radius:12px;padding:12px;text-align:center">'
-      +'<div style="font-size:18px;font-weight:900;color:#2563EB">'+nbCloturees+'</div>'
-      +'<div style="font-size:11px;color:#2563EB">Clôturées</div></div>'
-      +'</div>':'')
-    /* Table PDVs activés */
-    +(pdvsOrg.length?'<div class="card" style="margin-bottom:12px"><div style="font-size:13px;font-weight:800;color:#1A2B4A;margin-bottom:10px">Statut des PDVs</div>'
-      +pdvsOrg.map(function(p){
-        var prom=p.promotrice_id?db.utilisateurs.find(function(u2){return u2.id===p.promotrice_id;}):null;
-        var actif=allShifts.some(function(s){return s.promotrice_id===p.promotrice_id&&s.date===TODAY&&s.statut==='En cours';});
-        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F1F5F9">'
-          +'<div style="width:8px;height:8px;border-radius:50%;background:'+(actif?'#16A34A':(prom?'#F97316':'#CBD5E1'))+';flex-shrink:0"></div>'
-          +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.nom)+'</div>'
-          +(prom?'<div style="font-size:11px;color:#64748B">'+esc(prom.nom)+(actif?' &#128994; Présente':' &#8226; Non démarrée')+'</div>':'<div style="font-size:11px;color:#94A3B8">Non affectée</div>')
-          +'</div></div>';
-      }).join('')+'</div>':'');
-})()
+/* ═══ TRANCHES D'ÂGE ═══ */
++'<div class="card" style="margin-bottom:12px">'
++'<div style="font-size:11px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">&#128101; Tranches d\'âge</div>'
++'<div style="display:flex;gap:8px">'
++'<div style="flex:1;text-align:center;background:#EFF6FF;border-radius:10px;padding:14px 6px"><div style="font-size:11px;font-weight:800;color:#2563EB;margin-bottom:6px">18–25 ans</div><div style="font-size:28px;font-weight:900;color:#2563EB;line-height:1">'+nb1825+'</div><div style="font-size:10px;color:#64748B;margin-top:4px">pers.</div></div>'
++'<div style="flex:1;text-align:center;background:#FDF2F8;border-radius:10px;padding:14px 6px"><div style="font-size:11px;font-weight:800;color:#DB2877;margin-bottom:6px">25–40 ans</div><div style="font-size:28px;font-weight:900;color:#DB2877;line-height:1">'+nb2540+'</div><div style="font-size:10px;color:#64748B;margin-top:4px">pers.</div></div>'
++'<div style="flex:1;text-align:center;background:#F5F3FF;border-radius:10px;padding:14px 6px"><div style="font-size:11px;font-weight:800;color:#7C3AED;margin-bottom:6px">40+ ans</div><div style="font-size:28px;font-weight:900;color:#7C3AED;line-height:1">'+nb40p+'</div><div style="font-size:10px;color:#64748B;margin-top:4px">pers.</div></div>'
++'</div></div>'
 
-/* ═══ TABLE PERFORMANCES PAR PROMOTRICE ═══ */
-+(promStats.length>0?'<div class="card" style="margin-bottom:12px">'
-+'<div style="font-size:13px;font-weight:800;color:#1A2B4A;margin-bottom:10px">&#128101; Performances par promotrice</div>'
-+'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
-+'<thead><tr style="background:#F8FAFC">'
-+'<th style="padding:8px 6px;text-align:left;color:#64748B;font-weight:700;white-space:nowrap">Promotrice</th>'
-+'<th style="padding:8px 4px;text-align:center;color:#64748B;font-weight:700">Jours</th>'
-+'<th style="padding:8px 4px;text-align:center;color:#64748B;font-weight:700">Dégu.</th>'
-+'<th style="padding:8px 4px;text-align:center;color:#64748B;font-weight:700">Conv.</th>'
-+'<th style="padding:8px 4px;text-align:center;color:#64748B;font-weight:700">Ctn</th>'
-+'</tr></thead><tbody>'
-+promStats.map(function(ps,i){return '<tr style="border-top:1px solid #F1F5F9;background:'+(i%2?'#FAFAFA':'#fff')+'">'
-+'<td style="padding:8px 6px;font-weight:700;color:#1A2B4A">'+esc(ps.nom.split(' ')[0])+'</td>'
-+'<td style="padding:8px 4px;text-align:center;color:#2563EB;font-weight:700">'+ps.jours+'</td>'
-+'<td style="padding:8px 4px;text-align:center;color:#DB2777;font-weight:700">'+ps.deg+'</td>'
-+'<td style="padding:8px 4px;text-align:center;font-weight:800;color:'+(ps.tx>=50?'#16A34A':'#F97316')+'">'+ps.tx+'%</td>'
-+'<td style="padding:8px 4px;text-align:center;color:#F97316;font-weight:700">'+ps.cartons+'</td>'
-+'</tr>';}).join('')
-+'</tbody></table></div>':'')
-+'<button onclick="G.respTab=\'paie\';render()" style="width:100%;margin-top:12px;border:none;border-radius:10px;padding:11px;background:linear-gradient(135deg,#2563EB,#1D4ED8);color:#fff;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit">&#128176; Générer la fiche de paye</button>'
-+'</div>';
+/* ═══ GENRE ═══ */
++'<div class="card" style="margin-bottom:12px">'
++'<div style="font-size:11px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">&#9901;&#65039; Genre</div>'
++'<div style="display:flex;gap:10px">'
++'<div style="flex:1;text-align:center;background:#EFF6FF;border-radius:12px;padding:18px"><div style="font-size:32px;font-weight:900;color:#2563EB">'+nbH+'</div><div style="font-size:12px;color:#2563EB;margin-top:5px;font-weight:700">&#9794; Hommes</div></div>'
++'<div style="flex:1;text-align:center;background:#FDF2F8;border-radius:12px;padding:18px"><div style="font-size:32px;font-weight:900;color:#DB2877">'+nbF+'</div><div style="font-size:12px;color:#DB2877;margin-top:5px;font-weight:700">&#9792; Femmes</div></div>'
++'</div></div>'
+
+/* ═══ SATISFACTION CLIENTS ═══ */
++'<div class="card" style="margin-bottom:12px">'
++'<div style="font-size:13px;font-weight:800;color:#1A2B4A;margin-bottom:12px">&#11088; Satisfaction clients</div>'
++'<div style="display:flex;gap:6px;flex-direction:column">'
++[['Excellent','#16A34A',avisStats.excellent],['Bon','#2563EB',avisStats.bon],['Moyen','#F97316',avisStats.moyen],['Mauvais','#DC2626',avisStats.mauvais]].map(function(a){var pct=periodEvals.length?Math.round(a[2]/totalAvis*100):0;return '<div style="display:flex;align-items:center;gap:8px"><div style="width:62px;font-size:12px;color:#64748B;text-align:right">'+a[0]+'</div><div style="flex:1;background:#F1F5F9;border-radius:6px;height:22px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+a[1]+';border-radius:6px;transition:width .4s"></div></div><div style="width:34px;font-size:12px;font-weight:800;color:'+a[1]+'">'+a[2]+'</div></div>';}).join('')
++'</div></div>'
+
+/* ═══ SECTION 2 — PROMOTION / ACTIVATION ═══ */
++'<div class="card" style="margin-bottom:12px">'
++'<div style="font-size:13px;font-weight:900;color:#1A2B4A;margin-bottom:12px">&#127919; Promotion / Activation</div>'
++'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'
++'<div class="stat-box" title="PDVs activés par un commercial (approvisionnement + affectation promotrice)"><div style="font-size:22px;font-weight:900;color:#F97316">'+nbPdvActifs+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">PDV actifs</div></div>'
++'<div class="stat-box" title="Promotrices distinctes affectées par un commercial via Affectation Promotrice"><div style="font-size:22px;font-weight:900;color:#DB2877">'+nbPromAff+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">Prom. affectées</div></div>'
++'<div class="stat-box" title="Promotrices ayant démarré et clôturé la journée"><div style="font-size:22px;font-weight:900;color:#16A34A">'+nbPromPresentes+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">Prom. présentes</div></div>'
++'<div class="stat-box" title="Cartons vendus sur la période"><div style="font-size:22px;font-weight:900;color:#2563EB">'+cartonsVendus+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">Cartons vendus</div></div>'
++'<div class="stat-box" title="PDVs ayant eu au moins une activation"><div style="font-size:22px;font-weight:900;color:#7C3AED">'+nbPdvActives+'</div><div style="font-size:10px;color:#64748B;margin-top:3px">PDV activés</div></div>'
++'</div></div>';
 }
 
-/* ── TAB LIVE ── */
+/* ── TAB ACTIVITÉS (journal terrain) ── */
 if(tab==='live'){
-var today_shifts=db.shifts.filter(function(sh){return sh.date===TODAY&&sh.statut==='En cours';});
-var comms=db.utilisateurs.filter(function(u){return u.org_id===G.user.org_id&&(u.role==='commercial'||u.role==='superviseur');});
-var proms_all=db.utilisateurs.filter(function(u){return u.org_id===G.user.org_id&&u.role==='promotrice';});
+  /* ── État des filtres ── */
+  if(!G.liveFrom){G.liveFrom=TODAY;}
+  if(!G.liveTo){G.liveTo=TODAY;}
+  if(!G.liveTypes){G.liveTypes=[];} /* vide = tous les types */
 
-/* Grouper promotrices par commercial */
-var rows_html='';
-if(today_shifts.length===0){
-  rows_html='<tr><td colspan="5" style="padding:30px;text-align:center;color:#94A3B8;font-size:14px">Aucune activité en cours aujourd\'hui</td></tr>';
-}else{
-  /* Construire tableau groupé */
-  var grouped={};
-  today_shifts.forEach(function(sh){
-    var prom=proms_all.find(function(u){return u.id===sh.promotrice_id;});
-    if(!prom)return;
-    var pdv=(db.pdvs||[]).find(function(v){return v.id===sh.pdv_id;})||null;
-    var comm_id=prom.commercial_id||null;
-    var comm=comm_id?db.utilisateurs.find(function(u){return u.id===comm_id;}):null;
-    var key=comm?comm.id:'_';
-    if(!grouped[key])grouped[key]={comm:comm,rows:[]};
-    var photos=(sh.photos||[]).concat(sh.photo?[sh.photo]:[]);
-    grouped[key].rows.push({prom:prom,pdv:pdv,sh:sh,photos:photos,comm:comm});
+  var _allUsers=db.utilisateurs;
+  var _pdvs=db.pdvs||[];
+  function _duree(hd,hf){if(!hd||!hf)return'';var a=hd.split(':'),b=hf.split(':');var m=(+b[0]*60+(+b[1]))-(+a[0]*60+(+a[1]));if(m<=0)return'';return Math.floor(m/60)+'h'+(m%60>0?(m%60<10?'0':'')+(m%60):'');}
+  function _hm(h){return h?h.replace(':','h'):'—';}
+  /* Extraire le src réel : photo peut être une string base64 ou un objet {data,...} */
+  function _photoSrc(ph){if(!ph)return null;if(typeof ph==='string')return ph;if(ph.data)return ph.data;return null;}
+  function _photosNorm(arr){return (arr||[]).map(_photoSrc).filter(Boolean);}
+
+  /* Commerciaux liés à CE responsable (+ non encore liés = fallback) */
+  var _comms=_allUsers.filter(function(u){return u.org_id===G.user.org_id&&(u.role==='commercial'||u.role==='superviseur')&&(u.responsable_id===G.user.id||!u.responsable_id);});
+  var _commIds=_comms.map(function(c){return c.id;});
+  /* Promotrices liées aux commerciaux de CE responsable */
+  var _proms=_allUsers.filter(function(u){return u.org_id===G.user.org_id&&u.role==='promotrice'&&(!u.commercial_id||_commIds.indexOf(u.commercial_id)!==-1);});
+
+  /* ── Construire activités filtrées par période ── */
+  var activities=[];
+  db.shifts.filter(function(sh){return sh.date>=G.liveFrom&&sh.date<=G.liveTo;}).forEach(function(sh){
+    var p=_proms.find(function(u){return u.id===sh.promotrice_id;});if(!p)return;
+    var pdv=_pdvs.find(function(v){return v.id===sh.pdv_id;})||null;
+    activities.push({type:'degustation',label:'Dég.',icon:'&#127868;',agent:p,pdv_nom:pdv?pdv.nom:(sh.pdv_nom||'—'),hd:sh.hd||'',hf:sh.hf||'',statut:sh.statut==='Cloture'?'Clôturé':'En cours',photos:_photosNorm((sh.photos||[]).concat(sh.photo?[sh.photo]:[])),raw:sh});
   });
-  Object.keys(grouped).forEach(function(key){
-    var g=grouped[key];
-    var comm_name=g.comm?esc(g.comm.nom):'<span style="color:#94A3B8">Non assigné</span>';
-    g.rows.forEach(function(r,i){
-      rows_html+='<tr style="border-bottom:1px solid #F1F5F9">';
-      if(i===0){
-        
+  (db.promotions||[]).filter(function(pr){return pr.date>=G.liveFrom&&pr.date<=G.liveTo&&pr.promotrice_id&&!pr.commercial_id;}).forEach(function(pr){
+    var p=_proms.find(function(u){return u.id===pr.promotrice_id;});if(!p)return;
+    var pdv=_pdvs.find(function(v){return v.id===pr.pdv_id;})||null;
+    activities.push({type:'promotion',label:'Prom.',icon:'&#127919;',agent:p,pdv_nom:pdv?pdv.nom:(pr.pdv_nom||'—'),hd:pr.hd||'',hf:pr.hf||'',statut:'Clôturé',photos:_photosNorm(pr.photos),raw:pr});
+  });
+  (db.promotions||[]).filter(function(pr){return pr.date>=G.liveFrom&&pr.date<=G.liveTo&&pr.commercial_id;}).forEach(function(pr){
+    var c2=_comms.find(function(u){return u.id===pr.commercial_id;});if(!c2)return;
+    var pdv=_pdvs.find(function(v){return v.id===pr.pdv_id;})||null;
+    var isSup=pr.mode==='supervision';
+    activities.push({type:isSup?'activation':'dotation',label:isSup?'Act.':'Dot.',icon:isSup?'&#9889;':'&#128230;',agent:c2,pdv_nom:pdv?pdv.nom:(pr.pdv_nom||'—'),hd:'',hf:'',statut:'Clôturé',photos:_photosNorm(pr.photos),raw:pr});
+  });
+
+  /* ── Trier par heure de début : plus ancien → plus récent ── */
+  activities.sort(function(a,b){
+    if(!a.hd&&!b.hd)return 0;
+    if(!a.hd)return 1;   /* sans heure → en bas */
+    if(!b.hd)return -1;
+    return a.hd<b.hd?-1:a.hd>b.hd?1:0;
+  });
+
+  /* ── Appliquer filtre par type ── */
+  var filtered=G.liveTypes.length>0
+    ?activities.filter(function(a){return G.liveTypes.indexOf(a.type)!==-1;})
+    :activities;
+
+  var _tc={degustation:'#DB2877',promotion:'#F97316',dotation:'#2563EB',activation:'#16A34A'};
+  var _types=[
+    {k:'degustation',label:'Dég.',icon:'&#127868;',color:'#DB2877'},
+    {k:'promotion',  label:'Prom.',icon:'&#127919;',color:'#F97316'},
+    {k:'dotation',   label:'Dot.',icon:'&#128230;',color:'#2563EB'},
+    {k:'activation', label:'Act.',icon:'&#9889;',  color:'#16A34A'}
+  ];
+
+  /* ── Lignes tableau ── */
+  var rows='';
+  if(filtered.length===0){
+    rows='<tr><td colspan="6" style="padding:40px;text-align:center;color:#94A3B8;font-size:14px">&#128197; Aucune activité pour ces filtres</td></tr>';
+  } else {
+    filtered.forEach(function(act,idx){
+      var tc=_tc[act.type]||'#64748B';
+      var dur=_duree(act.hd,act.hf);
+      var horaireHtml=act.hd
+        ?'<span style="color:#94A3B8;font-size:11px">'+_hm(act.hd)+(act.hf?' - '+_hm(act.hf):'')+'</span>'+(dur?'<br><span style="color:#16A34A;font-size:12px;font-weight:800">('+dur+')</span>':'')
+        :'<span style="color:#CBD5E1;font-size:12px">—</span>';
+      var statOk=act.statut==='En cours';
+      var photoIcon='<span style="color:#CBD5E1;font-size:12px">—</span>';
+      if(act.photos.length>0){
+        var _src0=act.photos[0];
+        photoIcon='<a href="'+_src0+'" target="_blank" download="terrain.jpg" style="position:relative;display:inline-block;flex-shrink:0">'
+          +'<img src="'+_src0+'" style="width:38px;height:38px;border-radius:7px;object-fit:cover;display:block;border:1.5px solid #E2E8F0"/>'
+          +(act.photos.length>1?'<span style="position:absolute;bottom:-4px;right:-4px;background:#1A2B4A;color:#fff;font-size:8px;font-weight:900;border-radius:8px;padding:1px 5px">+' +(act.photos.length-1)+'</span>':'')
+          +'</a>';
       }
-      var thumbs='';
-      r.photos.slice(0,3).forEach(function(ph){
-        thumbs+='<img src="'+ph+'" style="width:44px;height:44px;border-radius:6px;object-fit:cover;margin-right:4px"/>';
-      });
-      if(!thumbs)thumbs='<span style="color:#CBD5E1;font-size:12px">—</span>';
-      /* PDV forcé? */
-      var forceToday=(db.forcages||[]).find(function(f){return f.promotrice_id===r.prom.id&&f.date===TODAY;});
-      var forceBadge=forceToday
-        ?'<span style="font-size:10px;background:#FEE2E2;color:#DC2626;border-radius:4px;padding:1px 5px;font-weight:700;margin-left:4px">GPS FORCÉ</span>'
-        :'';
-      var telLink=r.prom.telephone?'<a href="tel:'+esc(r.prom.telephone)+'" style="font-size:12px;color:#2563EB;text-decoration:none;font-weight:700">📞 '+esc(r.prom.telephone)+'</a>':'';
-      var commLine=r.comm?'<div style="font-size:11px;color:#94A3B8;margin-top:2px">👤 '+esc(r.comm.nom)+'</div>':'';
-      rows_html+='<td style="padding:10px 12px;font-size:13px">'
-        +'<div style="font-weight:700;color:#1A2B4A">'+esc(r.prom.nom)+forceBadge+'</div>'
-        +(telLink?'<div style="margin-top:3px">'+telLink+'</div>':'')
-        +commLine
+      rows+='<tr style="border-bottom:1px solid #F1F5F9;background:'+(idx%2?'#FAFBFC':'#fff')+'">'
+        +'<td style="padding:9px 10px;min-width:120px">'
+          +'<div style="font-size:13px;font-weight:800;color:#1A2B4A;line-height:1.2">'+esc(act.agent.nom)+'</div>'
+          +(act.agent.telephone?'<a href="tel:'+esc(act.agent.telephone)+'" style="font-size:11px;color:#2563EB;font-weight:700;text-decoration:none">&#128222; '+esc(act.agent.telephone)+'</a>':'<span style="font-size:11px;color:#CBD5E1">—</span>')
         +'</td>'
-        +'<td style="padding:10px 12px;color:#64748B;font-size:13px">'+(r.pdv?esc(r.pdv.nom):'—')+'</td>'
-        +'<td style="padding:10px 12px;color:#16A34A;font-weight:700;font-size:13px">'+esc(r.sh.hd)+'</td>'
-        +'<td style="padding:10px 8px">'+thumbs+'</td>'
-        +'<td style="padding:10px 8px"><button onclick="G.liveMsg={pid:'+r.prom.id+',nom:\'' +esc(r.prom.nom)+ '\'};G.modal=\'live-msg\';render()" style="border:none;background:none;font-size:20px;cursor:pointer" title="Envoyer un message">&#128172;</button></td>'
+        +'<td style="padding:9px 8px;white-space:nowrap">'
+          +'<span style="background:'+tc+'18;color:'+tc+';font-size:11px;font-weight:800;border-radius:6px;padding:3px 7px">'+act.icon+' '+act.label+'</span>'
+        +'</td>'
+        +'<td style="padding:9px 8px;font-size:12px;color:#475569;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(act.pdv_nom)+'</td>'
+        +'<td style="padding:9px 8px;white-space:nowrap;line-height:1.5">'+horaireHtml+'</td>'
+        +'<td style="padding:9px 8px;white-space:nowrap">'
+          +'<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;color:'+(statOk?'#16A34A':'#64748B')+'">'
+          +'<span style="width:7px;height:7px;border-radius:50%;background:'+(statOk?'#16A34A':'#CBD5E1')+';display:inline-block"></span>'
+          +act.statut+'</span>'
+        +'</td>'
+        +'<td style="padding:9px 8px">'
+          +'<div style="display:flex;gap:6px;align-items:center">'
+          +photoIcon
+          +'<button onclick="G.liveMsg={pid:'+act.agent.id+',nom:\''+esc(act.agent.nom)+'\'};G.modal=\'live-msg\';render()" style="border:none;background:#EFF6FF;color:#2563EB;border-radius:6px;width:28px;height:28px;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center">&#128172;</button>'
+          +'</div>'
+        +'</td>'
         +'</tr>';
     });
-  });
-}
-/* ── Section Dégustation collapsible ── */
+  }
 
+  /* ── Compteurs par type (pour badge sur filtre) ── */
+  var _counts={};
+  activities.forEach(function(a){_counts[a.type]=(_counts[a.type]||0)+1;});
 
-
-
-
-
-
-
-content='<div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">'
-  +'<div style="font-size:11px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:1px">&#128308; Activité en cours aujourd\'hui</div>'
-  +'<button onclick="fbLoad(function(){render();})" style="border:none;background:#EFF6FF;color:#2563EB;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:700;cursor:pointer">&#8635; Actualiser</button>'
+  content=
+  /* En-tête */
+  '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
+  +'<div><div style="font-size:15px;font-weight:900;color:#1A2B4A">&#128202; Journal terrain</div>'
+  +'<div style="font-size:11px;color:#94A3B8;margin-top:1px">'+filtered.length+' / '+activities.length+' activité'+(activities.length!==1?'s':'')+'</div></div>'
+  +'<button onclick="supaLoad(function(){render();})" style="border:none;background:#EFF6FF;color:#2563EB;border-radius:10px;padding:7px 12px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit">&#8635; Actualiser</button>'
   +'</div>'
-  +'<div style="overflow-x:auto;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)">'
-  +'<table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff">'
-  +'<thead><tr style="border-bottom:2px solid #E2E8F0">'
-  
-  +'<th style="padding:10px 12px;text-align:left;font-weight:700;font-size:11px;color:#64748B">PROMOTRICE</th>'
-  +'<th style="padding:10px 12px;text-align:left;font-weight:700;font-size:11px;color:#64748B">PDV</th>'
-  +'<th style="padding:10px 12px;text-align:left;font-weight:700;font-size:11px;color:#64748B">DÉBUT</th>'
-  +'<th style="padding:10px 12px;text-align:left;font-weight:700;font-size:11px;color:#64748B">PREUVES</th>'+'<th style="padding:10px 8px;text-align:center;font-weight:700;font-size:11px;color:#64748B">MSG</th>'
+
+  /* ── FILTRE PÉRIODE ── */
+  +'<div style="background:#fff;border-radius:12px;border:1px solid #E2E8F0;padding:12px 14px;margin-bottom:10px">'
+  +'<div style="font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">&#128197; Période</div>'
+  +'<div style="display:flex;gap:8px;align-items:center">'
+  +'<div style="flex:1"><div style="font-size:10px;color:#94A3B8;margin-bottom:3px">De</div>'
+  +'<input type="date" value="'+G.liveFrom+'" onchange="G.liveFrom=this.value;render()" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:9px;font-size:13px;font-family:inherit;color:#1A2B4A"></div>'
+  +'<div style="color:#CBD5E1;font-size:18px;padding-top:16px">→</div>'
+  +'<div style="flex:1"><div style="font-size:10px;color:#94A3B8;margin-bottom:3px">À</div>'
+  +'<input type="date" value="'+G.liveTo+'" onchange="G.liveTo=this.value;render()" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:9px;font-size:13px;font-family:inherit;color:#1A2B4A"></div>'
+  +(G.liveFrom!==TODAY||G.liveTo!==TODAY?'<button onclick="G.liveFrom=TODAY;G.liveTo=TODAY;render()" style="border:none;background:#F1F5F9;color:#64748B;border-radius:8px;padding:8px 10px;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit;margin-top:14px;white-space:nowrap">Auj.</button>':'')
+  +'</div>'
+  +'</div>'
+
+  /* ── FILTRES TYPE (pills cliquables) ── */
+  +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">'
+  +'<button onclick="G.liveTypes=[];render()" style="border:none;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;'+(G.liveTypes.length===0?'background:#1A2B4A;color:#fff':'background:#F1F5F9;color:#64748B')+'">Tous ('+activities.length+')</button>'
+  +_types.map(function(t){
+    var active=G.liveTypes.indexOf(t.k)!==-1;
+    var cnt=_counts[t.k]||0;
+    return '<button onclick="(function(){var i=G.liveTypes.indexOf(\''+t.k+'\');if(i===-1)G.liveTypes.push(\''+t.k+'\');else G.liveTypes.splice(i,1);render();})()" style="border:none;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;'+(active?'background:'+t.color+';color:#fff':'background:'+t.color+'18;color:'+t.color)+'">'+t.icon+' '+t.label+(cnt?' ('+cnt+')':'')+'</button>';
+  }).join('')
+  +'</div>'
+
+  /* Tableau */
+  +'<div style="overflow-x:auto;border-radius:12px;border:1px solid #E2E8F0;background:#fff">'
+  +'<table style="width:100%;border-collapse:collapse;font-size:12px">'
+  +'<thead><tr style="background:#F8FAFC;border-bottom:2px solid #E2E8F0">'
+  +'<th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;white-space:nowrap">Agent</th>'
+  +'<th style="padding:9px 8px;text-align:left;font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;white-space:nowrap">Op.</th>'
+  +'<th style="padding:9px 8px;text-align:left;font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;white-space:nowrap">PDV</th>'
+  +'<th style="padding:9px 8px;text-align:left;font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;white-space:nowrap">Horaire</th>'
+  +'<th style="padding:9px 8px;text-align:left;font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;white-space:nowrap">État</th>'
+  +'<th style="padding:9px 8px;text-align:center;font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;white-space:nowrap">Actions</th>'
   +'</tr></thead>'
-  +'<tbody>'+rows_html+'</tbody>'
+  +'<tbody>'+rows+'</tbody>'
   +'</table></div>';
 }
+
 
 if(tab==='equipe'){
 content='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><div class="card-title" style="margin:0">Commerciaux ('+comms.length+')</div><button class="btn go btn-sm" onclick="G.modal=\'comm\';G.newCommForm={nom:\'\',telephone:\'\'};render()">+ Ajouter</button></div>'
@@ -2505,7 +2615,7 @@ content='<div class="card"><div style="display:flex;justify-content:space-betwee
 +(comms.length===0?'<div style="color:#94A3B8;text-align:center;padding:20px">Aucun commercial enregistre.</div>':'')
 +comms.map(function(c){var sc=c.statut_compte;return '<div class="item"><div class="item-av go" style="color:#fff;font-size:20px;font-weight:900">'+esc(c.nom.charAt(0))+'</div><div style="flex:1"><div style="font-size:15px;font-weight:700;color:#1A2B4A">'+esc(c.nom)+'</div><div style="font-size:12px;color:#64748B;margin-top:3px">'+esc(c.telephone)+'</div></div><div style="display:flex;gap:6px;align-items:center">'+'<span class="badge '+(sc==='actif'?'badge-ok':sc==='en_attente'?'badge-wait':'badge-off')+'">'+(sc==='actif'?'Actif':sc==='en_attente'?'En attente':'Suspendu')+'</span>'+'<button onclick="suppUser('+c.id+')" style="border:none;background:#FEE2E2;color:#DC2626;border-radius:8px;padding:5px 9px;cursor:pointer;font-size:14px">&#128465;</button>'+'</div></div>';}).join('')
 +'</div>'
-+'<div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0 14px"><div class="card-title" style="margin:0">Promotrices ('+proms.length+')</div><button class="btn gp btn-sm" onclick="G.modal=\'add_prom\';G.newRespPromNom=\'\';G.newRespPromTel=\'\';render()">+ Ajouter</button></div>'
++'<div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0 14px"><div class="card-title" style="margin:0">Promotrices ('+proms.length+')</div><button class="btn gp btn-sm" onclick="G.modal=\'add_prom\';G.newRespPromNom=\'\';G.newRespPromTel=\'\';G.newRespPromRole=\'promotrice\';render()">+ Ajouter</button></div>'
 +(proms.length===0?'<div style="color:#94A3B8;font-size:14px;text-align:center;padding:16px">Aucune promotrice</div>'
 :proms.map(function(p){var sc=p.statut_compte||'actif';return '<div class="item"><div class="item-av gp" style="color:#fff;font-weight:900;font-size:18px">'+esc(p.nom.charAt(0))+'</div><div style="flex:1"><div style="font-size:15px;font-weight:700;color:#1A2B4A">'+esc(p.nom)+'</div><div style="font-size:12px;color:#64748B">'+esc(p.telephone)+'</div></div><div style="display:flex;gap:6px;align-items:center"><span class="badge '+(sc==='actif'?'badge-ok':sc==='en_attente'?'badge-wait':'badge-off')+'">'+(sc==='actif'?'Active':sc==='en_attente'?'En attente':'Suspendue')+'</span><button onclick="suppUser('+p.id+')" style="border:none;background:#FEE2E2;color:#DC2626;border-radius:8px;padding:5px 9px;cursor:pointer;font-size:14px">&#128465;</button></div></div>';}).join(''))
 +'</div>';
@@ -2702,6 +2812,7 @@ G.commPromoProds=G.commPromoProds||[];G.commPromoGadgets=G.commPromoGadgets||[];
 var pdvs=(db.pdvs||[]).filter(function(p){return p.org_id===u.org_id;});
 var prods=db.produits.filter(function(p){return p.org_id===u.org_id&&p.actif;});
 var eq=db.utilisateurs.filter(function(u2){return u2.org_id===u.org_id&&u2.role==='promotrice'&&u2.commercial_id===u.id&&u2.statut_compte==='actif';});
+var _dja={};(db.pdvs||[]).forEach(function(v){if(v.promotrice_id&&v.id!==G.commPdvId)_dja[v.promotrice_id]=v.nom;});
 var pdvSel=G.commPdvId?pdvs.find(function(p){return p.id===G.commPdvId;}):null;
 var superv=G.commIsSuperv;
 function sec(num,titre,body){
@@ -2799,7 +2910,7 @@ var evidBody='<label data-cam="comm" style="display:flex;width:100%;border:2px d
 +photoGrid;
 var affectBody='<select onchange="G.commPromoPromId=parseInt(this.value)||null" style="width:100%;padding:13px;border:1.5px solid #E2E8F0;border-radius:12px;font-size:15px;font-family:inherit;background:#fff;color:#1A2B4A">'
 +'<option value="">-- Choisir la promotrice --</option>'
-+eq.map(function(p){return '<option value="'+p.id+'"'+(G.commPromoPromId===p.id?' selected':'')+'>'+esc(p.nom)+'</option>';}).join('')
++eq.map(function(p){var x=_dja[p.id];if(x)return '<option value="" disabled style="color:#CBD5E1">'+esc(p.nom)+' ('+esc(x)+')</option>';return '<option value="'+p.id+'"'+(G.commPromoPromId===p.id?' selected':'')+'>'+esc(p.nom)+'</option>';}).join('')
 +'</select>';
 return sec('1','&#128205; Point de Vente',pdvBody)
 +sec('2','&#128230; Approvisionnement',approBody)
@@ -2862,16 +2973,23 @@ evt.target.value='';render();
 }
 function validerCommPromo(){
   /* Vérifier si la promotrice est déjà affectée à un autre PDV */
-  if(G.commPromoId){
-    var existPdv=(G.db.pdvs||[]).find(function(p){return p.promotrice_id===G.commPromoId&&p.id!==G.commPdvId;});
-    if(existPdv){
-      if(!confirm('&#9888; Cette promotrice est déjà affectée au PDV "'+existPdv.nom+'". Continuer quand même ?'))return;
-    }
+  if(G.commPromoPromId){
+    var existPdv=(G.db.pdvs||[]).find(function(p){return p.promotrice_id===G.commPromoPromId&&p.id!==G.commPdvId;});
+    if(existPdv){alert('Cette promotrice est deja au PDV : '+existPdv.nom);return;}
   }
 var pdv=G.db.pdvs.find(function(p){return p.id===G.commPdvId;});
+/* ── Affecter la promotrice au PDV (onglet 4) ── */
+if(G.commPromoPromId&&pdv){
+  pdv.promotrice_id=G.commPromoPromId;
+  /* Lier la promotrice à ce commercial si pas encore fait */
+  var _pu=G.db.utilisateurs.find(function(u){return u.id===G.commPromoPromId;});
+  if(_pu&&!_pu.commercial_id)_pu.commercial_id=G.user.id;
+}
+var _totalCartons=G.commPromoProds.reduce(function(a,p){return a+(+p.cartons||0);},0);
 G.db.promotions.push({
 id:uid(),commercial_id:G.user.id,pdv_id:G.commPdvId,
 pdv_nom:pdv?pdv.nom:'',date:TODAY,
+cartons:_totalCartons,
 mode:G.commIsSuperv?'supervision':'approvisionnement',
 prods:G.commPromoProds.slice(),gadgets:G.commPromoGadgets.slice(),
 photos:G.commPromoPhotos.slice(),promotrice_id:G.commPromoPromId
@@ -3021,8 +3139,8 @@ body=rPromo();
 }
 if(tab==='deg'){
 var sa=db.shifts.find(function(s){return s.promotrice_id===u.id&&s.date===TODAY&&s.statut==='En cours';});
-/* Session active → retourner automatiquement dans rSes */
-if(sa&&G.shiftId===sa.id){G.screen='promotrice-session';return rSes();}
+/* Session active → retourner automatiquement dans rSes (même après reconnexion) */
+if(sa){if(!G.shiftId||G.shiftId!==sa.id){G.shiftId=sa.id;G.counter=db.degustations.filter(function(d){return d.sid===sa.id;}).length;}G.screen='promotrice-session';return rSes();}
 var msh=db.shifts.filter(function(s){return s.promotrice_id===u.id;}).slice(-4).reverse();
 var stockDegBlock='';
 body='<button onclick="G.promoPTab=\'info\';render()" style="border:none;background:#F1F5F9;border-radius:12px;padding:10px 16px;color:#64748B;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:14px;display:flex;align-items:center;gap:6px">&#8592; Retour</button>'
@@ -3081,6 +3199,7 @@ if(gpsConfirmed){
 }
 /* PDV d'affectation de la promotrice */
 var affectPdv=pdvs.find(function(p){return p.promotrice_id===u.id;});
+var pdvBody='';
 var showPdvSelect=G.promoChangePdv||!affectPdv;
 if(showPdvSelect){
   pdvBody='<select onchange="G.promoPdvId=parseInt(this.value)||null;G.promoGpsOk=false;G.promoGpsLat=null;G.promoGpsLng=null;G.promoGpsRefused=false;deferRender()" style="width:100%;padding:13px;border:1.5px solid #E2E8F0;border-radius:12px;font-size:16px;font-family:inherit;background:#fff;color:#1A2B4A;margin-bottom:10px"><option value="">-- Sélectionner un PDV --</option>'+pdvs.map(function(p){return '<option value="'+p.id+'"'+(G.promoPdvId===p.id?' selected':'')+'>'+esc(p.nom)+(p.lat?' 📍':'')+'</option>';}).join('')+'</select>';
@@ -3380,9 +3499,14 @@ G.promoStep='cloture';render();
 
 function cloturerPromo(){
 var pdv=G.db.pdvs.find(function(p){return p.id===G.promoPdvId;});
+var _cartonsVendus=G.promoStockDebut.reduce(function(a,d,i){
+  var f=G.promoStockFin[i]||{cartons:0};
+  return a+Math.max(0,(+d.cartons||0)-(+f.cartons||0));
+},0);
 G.db.promotions.push({
 id:uid(),promotrice_id:G.user.id,pdv_id:G.promoPdvId,
 pdv_nom:pdv?pdv.nom:'',date:TODAY,
+cartons:_cartonsVendus,
 hd:G.promoHeureDebut,hf:G.promoHeureFin||tn(),
 stock_debut:G.promoStockDebut.slice(),
 stock_fin:G.promoStockFin.slice(),
@@ -3591,7 +3715,7 @@ function captureEvidPhoto(evt){
         canvas.height=Math.round(img.height*ratio);
         ctx.drawImage(img,0,0,canvas.width,canvas.height);
       }
-      var photo=canvas.toDataURL('image/jpeg',0.7);
+      var photo=canvas.toDataURL('image/jpeg',0.5);
       G.sesPhoto=photo;
       if(!G.sesPhotos)G.sesPhotos=[];
       G.sesPhotos.push(photo);
@@ -3621,7 +3745,7 @@ function openEvidCam(){
   inp.onchange=captureEvidPhoto;
   document.body.appendChild(inp);
   inp.click();
-  setTimeout(function(){try{document.body.removeChild(inp);}catch(e){}},10000);
+  setTimeout(function(){try{document.body.removeChild(inp);}catch(e){}},5000);
 }
 function val(){
 if(!G.civ){G.fErr='La civilite est obligatoire.';render();return;}
@@ -3630,7 +3754,7 @@ if(G.selProds.some(function(p){return !p.avis;})){G.fErr="L'avis emoji est oblig
 if(G.achat===null){G.fErr="Indiquez si un achat a ete effectue.";render();return;}
 G.fErr='';
 var did=uid();
-G.db.degustations.push({id:did,sid:G.shiftId,civ:G.civ,nom:G.nomP,tel:G.telP,achat:G.achat});
+G.db.degustations.push({id:did,sid:G.shiftId,civ:G.civ,nom:G.nomP,tel:G.telP,achat:G.achat,degtAge:G.degtAge||'',tranche_age:G.degtAge||''});
 G.selProds.forEach(function(p){G.db.evaluations.push({id:uid(),did:did,pid:p.pid,avis:p.avis,cmt:p.cmt});});
 G.counter++;
 G.civ='';G.nomP='';G.telP='';G.achat=null;
@@ -3663,7 +3787,8 @@ function cloturOui(){G.db.shifts=G.db.shifts.map(function(s){return s.id===G.shi
 function compressImage(dataUrl,cb){
   var img=new Image();
   img.onload=function(){
-    var MAX=800;
+    /* Max 400px, qualité 0.5 pour rester sous 100KB */
+    var MAX=400;
     var w=img.width,h=img.height;
     if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
     if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
@@ -3671,7 +3796,7 @@ function compressImage(dataUrl,cb){
     canvas.width=w;canvas.height=h;
     var ctx=canvas.getContext('2d');
     ctx.drawImage(img,0,0,w,h);
-    cb(canvas.toDataURL('image/jpeg',0.7));
+    cb(canvas.toDataURL('image/jpeg',0.5));
   };
   img.onerror=function(){cb(dataUrl);};
   img.src=dataUrl;
@@ -3696,10 +3821,22 @@ function editMsg(id){
   if(el){el.value=G.msgTxt;el.focus();}
   render();
 }
+function sendLiveMsg(){
+  var t=document.getElementById('live-msg-input');
+  var txt=((t?t.value:'')||G.liveMsgText||'').trim();
+  if(!txt){alert('Tapez un message.');return;}
+  var lm=G.liveMsg||{};
+  G.db.messages.push({id:uid(),org_id:G.user.org_id,texte:txt,auteur:G.user.nom,
+    date:new Date().toISOString(),heure:tn(),type:'direct',dest_id:lm.pid||0});
+  G.liveMsgText='';
+  G.modal=null;
+  saveDB();render();
+}
 function deleteMsg(id){
-  if(!confirm('Supprimer ce message ?'))return;
-  G.db.messages=G.db.messages.filter(function(m){return m.id!==id;});
-  render();
+  askConfirm('Supprimer ce message ?',function(){
+    G.db.messages=G.db.messages.filter(function(m){return m.id!==id;});
+    render();
+  });
 }
 
 function sendShiftWA(shiftId){
@@ -3938,6 +4075,6 @@ if('serviceWorker' in navigator){
       .catch(function(e){console.warn('[SW]',e.message);});
   });
 }
-<
+</script>
 </body>
 </html>
