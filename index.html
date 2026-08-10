@@ -660,14 +660,16 @@ function initFirebase(){
     /* Sync douce toutes les 30s si aucune saisie active */
     setInterval(function(){
       var active=document.activeElement;
-        var isTyping=active&&(active.tagName==='INPUT'||active.tagName==='TEXTAREA');
-        if(!isTyping){
-          if(_localDirty){supaSave();} /* Données locales non syncées : sauvegarder d'abord */
-          else if(!_fbSyncing&&Date.now()-_supaLastSave>15000){
-            supaLoad(function(ok){if(ok)render();});
-          }
+      var isTyping=active&&(active.tagName==='INPUT'||active.tagName==='TEXTAREA'||active.tagName==='SELECT');
+      if(!isTyping){
+        if(_localDirty){
+          supaSave(); /* Sauvegarder les données locales en priorité */
+        } else if(!_fbSyncing&&Date.now()-_supaLastSave>3000){
+          /* Vérifier si Supabase a été mis à jour par un autre appareil */
+          supaLoad(function(ok){if(ok)render();});
         }
-    },30000);
+      }
+    },5000); /* Sync toutes les 5 secondes pour mise à jour quasi-immédiate entre appareils */
     /* Le bouton ↻ permet une sync manuelle */
   });
   return true;
