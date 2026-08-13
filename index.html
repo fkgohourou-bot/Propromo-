@@ -658,10 +658,33 @@ function supaSave(){
   if(now-_supaLastSave<minDelay){if(_localDirty)setTimeout(supaSave,minDelay);return;}
   _supaLastSave=now;_fbSyncing=true;
   var _vSave=_dirtyVersion;
-  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
-    method:'PATCH',
-    headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
-    body:JSON.stringify({data:JSON.stringify(cleanDbForSync(G.db)),updated_at:new Date().toISOString()})
+  var _COLS=['utilisateurs','produits','consommables','pdvs','shifts','degustations',
+             'evaluations','promotions','messages','paies','forcages','acteurs','stocks','organisations'];
+  /* ── Lire Supabase avant d'écrire pour éviter d'écraser les données d'autres appareils ── */
+  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1&select=data',{headers:_supaHdrs()})
+  .then(function(r){return r.json();})
+  .then(function(rows){
+    if(rows&&rows[0]&&rows[0].data&&rows[0].data!=='{}'){
+      try{
+        var _srv=JSON.parse(rows[0].data);
+        /* Ajouter dans G.db les enregistrements présents sur Supabase mais pas en local */
+        _COLS.forEach(function(k){
+          if(!_srv[k])return;
+          if(!G.db[k])G.db[k]=[];
+          _srv[k].forEach(function(s){
+            if(!G.db[k].find(function(l){return l.id===s.id;})){
+              G.db[k].push(s); /* Donnée d'un autre appareil → intégrer */
+            }
+          });
+        });
+      }catch(e){}
+    }
+    /* Écrire le résultat fusionné sur Supabase */
+    return fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
+      method:'PATCH',
+      headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
+      body:JSON.stringify({data:JSON.stringify(cleanDbForSync(G.db)),updated_at:new Date().toISOString()})
+    });
   })
   .then(function(r){
     _fbSyncing=false;_fbConnected=true;_fbLastSync=tn();
@@ -701,7 +724,7 @@ function initFirebase(){
         if(_localDirty){
           supaSave();
         } else if(!_fbSyncing&&Date.now()-_supaLastSave>3000){
-          supaLoad(function(ok){if(ok)render();});
+          supaLoad(function(ok){if(ok){_syncRender=true;render();_syncRender=false;}});
         }
       }
     },5000); /* Sync toutes les 5 secondes pour mise à jour quasi-immédiate entre appareils */
@@ -745,6 +768,7 @@ var _fbLastSync=null;
 var _localDirty=false; /* true = données locales non encore syncées */
 var _dirtyVersion=0;
 var _deletedMsgIds=[];
+var _syncRender=false; /* true = render déclenché par sync, pas par action utilisateur */
 function fbStatus(){
   /* Supabase est le backend principal */
   if(!_fbConnected)return{ok:false,msg:'Hors ligne'};
@@ -808,10 +832,12 @@ try{
   G.db.config.payeDateDu=G.payeDateDu;
   G.db.config.payeDateAu=G.payeDateAu;
   localStorage.setItem('propromo_db',JSON.stringify(G.db));
-  /* Sync Firebase si connecté */
-  _localDirty=true;
-  _dirtyVersion++;
-  fbSave();
+  /* Ne pas marquer dirty si render déclenché par sync (évite boucle save/load) */
+  if(!_syncRender){
+    _localDirty=true;
+    _dirtyVersion++;
+    fbSave();
+  }
   /* Sauver aussi la session active */
   if(G.user){
     /* Ne pas sauvegarder les écrans temporaires */
@@ -4167,7 +4193,7 @@ window.addEventListener('offline',function(){render();});
 window.addEventListener('online',function(){
   /* Retour réseau : sauvegarder les données en attente immédiatement */
   if(_localDirty){setTimeout(supaSave,500);}
-  else{supaLoad(function(ok){if(ok)render();});}
+  else{supaLoad(function(ok){if(ok){_syncRender=true;render();_syncRender=false;}});}
   render();
 });
 
