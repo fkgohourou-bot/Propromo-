@@ -658,33 +658,10 @@ function supaSave(){
   if(now-_supaLastSave<minDelay){if(_localDirty)setTimeout(supaSave,minDelay);return;}
   _supaLastSave=now;_fbSyncing=true;
   var _vSave=_dirtyVersion;
-  var _COLS=['utilisateurs','produits','consommables','pdvs','shifts','degustations',
-             'evaluations','promotions','messages','paies','forcages','acteurs','stocks','organisations'];
-  /* ── Lire Supabase avant d'écrire pour éviter d'écraser les données d'autres appareils ── */
-  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1&select=data',{headers:_supaHdrs()})
-  .then(function(r){return r.json();})
-  .then(function(rows){
-    if(rows&&rows[0]&&rows[0].data&&rows[0].data!=='{}'){
-      try{
-        var _srv=JSON.parse(rows[0].data);
-        /* Ajouter dans G.db les enregistrements présents sur Supabase mais pas en local */
-        _COLS.forEach(function(k){
-          if(!_srv[k])return;
-          if(!G.db[k])G.db[k]=[];
-          _srv[k].forEach(function(s){
-            if(!G.db[k].find(function(l){return l.id===s.id;})){
-              G.db[k].push(s); /* Donnée d'un autre appareil → intégrer */
-            }
-          });
-        });
-      }catch(e){}
-    }
-    /* Écrire le résultat fusionné sur Supabase */
-    return fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
-      method:'PATCH',
-      headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
-      body:JSON.stringify({data:JSON.stringify(cleanDbForSync(G.db)),updated_at:new Date().toISOString()})
-    });
+  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
+    method:'PATCH',
+    headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
+    body:JSON.stringify({data:JSON.stringify(cleanDbForSync(G.db)),updated_at:new Date().toISOString()})
   })
   .then(function(r){
     _fbSyncing=false;_fbConnected=true;_fbLastSync=tn();
@@ -840,12 +817,10 @@ try{
   }
   /* Sauver aussi la session active */
   if(G.user){
-    /* Ne pas sauvegarder les écrans temporaires */
-    var _scr=G.screen;
-    if(_scr==='params'||_scr==='login')_scr=({
-      superadmin:'superadmin',responsable:'responsable',
-      commercial:'commercial',promotrice:'promotrice-home'
-    })[G.user.role]||'login';
+    /* Normaliser : ne sauvegarder que les écrans gérés par page() */
+    var _validScreens=['superadmin','responsable','commercial','promotrice-home','promotrice-session'];
+    var _roleHome={superadmin:'superadmin',responsable:'responsable',commercial:'commercial',promotrice:'promotrice-home'};
+    var _scr=_validScreens.indexOf(G.screen)!==-1?G.screen:(_roleHome[G.user.role]||'login');
     localStorage.setItem('propromo_session',JSON.stringify({
       userId:G.user.id, screen:_scr,
       respTab:G.respTab, commTab:G.commTab, promoPTab:G.promoPTab,
@@ -2485,7 +2460,11 @@ var cartonsVendus=periodPromos.reduce(function(a,pr){return a+(+pr.cartons||0);}
 var nbPdvActives=[...new Set(periodPromos.filter(function(pr){return pr.pdv_id;}).map(function(pr){return pr.pdv_id;}))].length;
 
 content=
-/* ═══ FILTRE PÉRIODE ═══ */
+/* Bouton actualisation forcée */
+'<button onclick="supaLoad(function(ok){if(ok)render()})" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;border:none;background:linear-gradient(135deg,#1A2B4A,#2563EB);color:#fff;border-radius:14px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:12px">'
++'<span style="font-size:20px">&#8635;</span> Actualiser le tableau de bord</button>'
+
++/* ═══ FILTRE PÉRIODE ═══ */
 '<div class="card" style="margin-bottom:12px">'
 +'<div style="font-size:13px;font-weight:900;color:#1A2B4A;margin-bottom:10px">&#128197; Période</div>'
 +'<div style="display:flex;gap:10px">'
