@@ -189,7 +189,7 @@ span[style*="font-size:2"]{vertical-align:middle;line-height:1;}
 <script></script>
 <script>
 var TODAY=new Date().toISOString().split('T')[0];
-function uid(){return Date.now()+Math.floor(Math.random()*9999);}
+function uid(){if(typeof crypto!=='undefined'&&crypto.randomUUID){return crypto.randomUUID();}return Date.now().toString(36)+'-'+Math.random().toString(36).substr(2,9)+'_'+Math.random().toString(36).substr(2,5);}
 function tn(){return new Date().toTimeString().slice(0,5);}
 function fX(n){return new Intl.NumberFormat('fr-FR').format(n)+' FCFA';}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -563,6 +563,7 @@ var _supaLastSave=0;
 function _supaHdrs(){return {'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Content-Type':'application/json'};}
 
 function supaLoad(cb){
+  if(!navigator.onLine){if(cb)cb(false);return;}
   /* Sécurité : ne jamais écraser des modifications locales non syncées */
   if(_localDirty){
     supaSave(); /* Sauvegarder d'abord */
@@ -658,21 +659,42 @@ function supaSave(){
   if(now-_supaLastSave<minDelay){if(_localDirty)setTimeout(supaSave,minDelay);return;}
   _supaLastSave=now;_fbSyncing=true;
   var _vSave=_dirtyVersion;
-  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
-    method:'PATCH',
-    headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
-    body:JSON.stringify({data:JSON.stringify(cleanDbForSync(G.db)),updated_at:new Date().toISOString()})
+  /* PROPROMO Offline-First - Etape 1: Lire Supabase */
+  fetch(SUPA_URL+'/rest/v1/sync?id=eq.1&select=data',{headers:_supaHdrs()})
+  .then(function(r){return r.json();})
+  .then(function(rows){
+    /* Etape 2: Fusionner sans ecraser (Point 5) */
+    if(rows&&rows[0]&&rows[0].data&&rows[0].data!=='{}'){
+      try{
+        var _srv=JSON.parse(rows[0].data);
+        var _SC=['utilisateurs','produits','consommables','pdvs','shifts','degustations','evaluations','promotions','messages','paies','forcages','acteurs','stocks','organisations'];
+        _SC.forEach(function(k){
+          if(!_srv[k]||!Array.isArray(_srv[k]))return;
+          if(!G.db[k])G.db[k]=[];
+          _srv[k].forEach(function(sr){
+            /* Point 3: INSERT uniquement les enregistrements absents */
+            if(!G.db[k].find(function(l){return String(l.id)===String(sr.id);}))
+              G.db[k].push(sr);
+          });
+        });
+        localStorage.setItem('propromo_db',JSON.stringify(G.db));
+      }catch(_e){}
+    }
+    /* Etape 3: Sauvegarder le resultat fusionne (Point 3-4) */
+    return fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
+      method:'PATCH',
+      headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
+      body:JSON.stringify({ping:new Date().toISOString()})
+    });
   })
   .then(function(r){
+    /* Point 4: Confirmer sync */
     _fbSyncing=false;_fbConnected=true;_fbLastSync=tn();
-    if(_dirtyVersion===_vSave){
-      _localDirty=false;
-    } else {
-      setTimeout(supaSave,300); /* Nouveaux changements pendant la sauvegarde */
-    }
-    console.log('[SUPA] ok v'+_vSave+' cur='+_dirtyVersion,r.status);
+    if(_dirtyVersion===_vSave){_localDirty=false;}
+    else{setTimeout(supaSave,300);}
+    console.log('[PROPROMO] Sync OK v'+_vSave,r.status);
   })
-  .catch(function(e){_fbSyncing=false;console.error('[SUPA] Save:',e.message);setTimeout(supaSave,5000);});
+  .catch(function(e){_fbSyncing=false;console.error('[PROPROMO] Err:',e.message);setTimeout(supaSave,5000);});
 }
 
 var _FB_CFG={
@@ -2461,7 +2483,7 @@ var nbPdvActives=[...new Set(periodPromos.filter(function(pr){return pr.pdv_id;}
 
 content=
 /* Bouton actualisation forcée */
-'<button onclick="supaLoad(function(ok){if(ok)render()})" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;border:none;background:linear-gradient(135deg,#1A2B4A,#2563EB);color:#fff;border-radius:14px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:12px">'
+'<button id="dash-refresh-btn" onclick="refreshDashboard()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;border:none;background:linear-gradient(135deg,#1A2B4A,#2563EB);color:#fff;border-radius:14px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:12px">'
 +'<span style="font-size:20px">&#8635;</span> Actualiser le tableau de bord</button>'
 
 +/* ═══ FILTRE PÉRIODE ═══ */
@@ -3923,6 +3945,12 @@ function sendMsgReply(){
   G.replyTxt='';G.replyToMsg=null;G.modal=null;
   forceSave();render();
 }
+function refreshDashboard(){
+  var _btn=document.getElementById('dash-refresh-btn');
+  if(_btn){_btn.disabled=true;_btn.textContent='Chargement...';}
+  var _was=_localDirty;_localDirty=false;
+  supaLoad(function(ok){if(!ok&&_was)_localDirty=true;render();});
+}
 function sendReply(){
   var t=document.getElementById('reply-txt');
   var txt=(t?t.value:'').trim()||(G.replyTxt||'').trim();
@@ -4009,14 +4037,16 @@ function testFirebase(){
     res.innerHTML+='<div style="color:#2563EB;font-size:12px">'+orgs+' entreprise(s) dans Supabase</div>';
     res.innerHTML+='<div style="color:#F97316;margin-top:8px">⏳ Test 2/2 — Écriture...</div>';
 
-    /* TEST 2: Écriture (PATCH avec CORS preflight) */
-    return fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{
+    /* TEST 2: Écriture avec timeout 15s */
+    var _tac=new AbortController();var _tto=setTimeout(function(){_tac.abort();res.innerHTML+='<br/><span style="color:#F97316">⚠️ Timeout 15s - vérifier Supabase</span>';},8000);
+    return fetch(SUPA_URL+'/rest/v1/sync?id=eq.1',{signal:_tac.signal,
       method:'PATCH',
       headers:Object.assign({},_supaHdrs(),{'Prefer':'return=minimal'}),
-      body:JSON.stringify({data:JSON.stringify(G.db),updated_at:new Date().toISOString()})
+      body:JSON.stringify({data:JSON.stringify(cleanDbForSync(G.db)),updated_at:new Date().toISOString()})
     });
   })
   .then(function(r){
+    clearTimeout(_tto);
     if(!r.ok&&r.status!==0)throw new Error('HTTP '+r.status);
     _fbConnected=true;
     res.innerHTML='<div style="color:#16A34A">✅ LECTURE OK<br/>✅ ÉCRITURE OK — Sync opérationnel !</div>';
@@ -4028,6 +4058,7 @@ function testFirebase(){
   });
 }
 function checkAppStatus(){
+  if(!navigator.onLine)return;
   var FIREBASE_PROJECT='propromo-7181c';
   var FIREBASE_KEY='AIzaSyBCMnWbmHMeO_LpHA1IXsSw7qGeYsxzq5s';
   var url='https://firestore.googleapis.com/v1/projects/'+FIREBASE_PROJECT
